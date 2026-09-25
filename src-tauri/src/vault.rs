@@ -187,22 +187,35 @@ pub fn load(path: &Path, password: &SecretString) -> Result<UnlockedVault> {
     let header = file.header();
 
     let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
-    let nonce: [u8; NONCE_LEN] = decode_fixed(&file.cipher.nonce)?;
-    let ciphertext = B64
-        .decode(&file.ciphertext)
-        .map_err(|_| VaultError::InvalidFormat)?;
-
     let key = crypto::derive_key(password, &salt, &header.kdf_params())?;
-    let aad = aad_bytes(&header)?;
-    let plaintext = crypto::decrypt(&key, &nonce, &aad, &ciphertext)?;
+    let plaintext = decrypt_file(&file, &key)?;
     let data: VaultData =
         serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
 
     Ok(UnlockedVault { header, key, data })
 }
 
-/// Encrypts the vault with a fresh nonce and writes it to `path` atomically, after first
-/// copying the current file (if any) to `<path>.bak`.
+/// Authenticates and decrypts a parsed file with an already-derived key.
+fn decrypt_file(file: &VaultFile, key: &Key) -> Result<Zeroizing<Vec<u8>>> {
+    let nonce: [u8; NONCE_LEN] = decode_fixed(&file.cipher.nonce)?;
+    let ciphertext = B64
+        .decode(&file.ciphertext)
+        .map_err(|_| VaultError::InvalidFormat)?;
+    let aad = aad_bytes(&file.header())?;
+    crypto::decrypt(key, &nonce, &aad, &ciphertext)
+}
+
+/// True only if `bytes` is a well-formed vault that authenticates under `key`.
+fn is_good_vault(bytes: &[u8], key: &Key) -> bool {
+    parse_vault_file(bytes)
+        .and_then(|file| decrypt_file(&file, key))
+        .is_ok()
+}
+
+/// Encrypts the vault with a fresh nonce and writes it to `path` atomically.
+///
+/// Before writing, the current file is copied to `<path>.bak`, but only if it decrypts
+/// with this vault's key. A corrupted or foreign file never replaces a good backup.
 pub fn save(vault: &UnlockedVault, path: &Path) -> Result<()> {
     let plaintext =
         Zeroizing::new(serde_json::to_vec(&vault.data).map_err(|_| VaultError::InvalidFormat)?);
@@ -222,7 +235,9 @@ pub fn save(vault: &UnlockedVault, path: &Path) -> Result<()> {
 
     if path.exists() {
         let current = fs::read(path)?;
-        write_atomic(&backup_path(path), &current)?;
+        if is_good_vault(&current, &vault.key) {
+            write_atomic(&backup_path(path), &current)?;
+        }
     }
     write_atomic(path, &bytes)
 }
@@ -620,6 +635,63 @@ mod tests {
         let backup = load(&backup_path(&path), &password()).unwrap();
         assert_eq!(backup.data.entries.len(), 1);
         assert_eq!(load(&path, &password()).unwrap().data.entries.len(), 2);
+    }
+
+    #[test]
+    fn corrupted_vault_does_not_replace_good_backup() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut vault = new_vault(&dir);
+        vault.data.entries.push(sample_entry(1));
+        save(&vault, &path).unwrap();
+        let good_backup = fs::read(backup_path(&path)).unwrap();
+
+        fs::write(&path, b"{ this is not a vault").unwrap();
+        vault.data.entries.push(sample_entry(2));
+        save(&vault, &path).unwrap();
+
+        assert_eq!(fs::read(backup_path(&path)).unwrap(), good_backup);
+        let backup = load(&backup_path(&path), &password()).unwrap();
+        assert!(backup.data.entries.is_empty());
+        assert_eq!(load(&path, &password()).unwrap().data.entries.len(), 2);
+    }
+
+    #[test]
+    fn tampered_vault_does_not_replace_good_backup() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut vault = new_vault(&dir);
+        vault.data.entries.push(sample_entry(1));
+        save(&vault, &path).unwrap();
+        let good_backup = fs::read(backup_path(&path)).unwrap();
+
+        let mut json = read_json(&path);
+        json["kdf"]["t"] = Value::from(2);
+        write_json(&path, &json);
+        save(&vault, &path).unwrap();
+
+        assert_eq!(fs::read(backup_path(&path)).unwrap(), good_backup);
+    }
+
+    #[test]
+    fn vault_from_another_key_is_not_backed_up() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let vault = new_vault(&dir);
+
+        let other_dir = TestDir::new();
+        let other = create_with_params(
+            &other_dir.vault_path(),
+            &SecretString::from("a completely different password"),
+            KdfParams::fast(),
+        )
+        .unwrap();
+        save(&other, &path).unwrap();
+        assert!(!backup_path(&path).exists());
+
+        save(&vault, &path).unwrap();
+        assert!(!backup_path(&path).exists());
+        assert!(load(&path, &password()).is_ok());
     }
 
     #[test]
