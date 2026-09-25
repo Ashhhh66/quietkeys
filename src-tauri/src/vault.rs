@@ -179,17 +179,19 @@ fn create_with_params(
     params: KdfParams,
 ) -> Result<UnlockedVault> {
     check_new_master_password(password)?;
+    // Early exit before the slow key derivation. `write_new` is the real guarantee.
     if path.exists() {
         return Err(VaultError::Io(io::ErrorKind::AlreadyExists));
     }
     let (header, key) = new_header_and_key(password, params)?;
-    let mut vault = UnlockedVault {
+    let vault = UnlockedVault {
         header,
         key,
         data: VaultData::default(),
         upgrade: None,
     };
-    save(&mut vault, path)?;
+    let bytes = encrypt_to_file_bytes(&vault.data, &vault.header, &vault.key)?;
+    write_new(path, &bytes)?;
     Ok(vault)
 }
 
@@ -395,32 +397,57 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Writes a brand-new file. Fails with `AlreadyExists` if anything is at `path`; the OS
+/// checks this at the moment of creation, so there is no window for a race.
+fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = open_owner_only(path, OpenMode::CreateNew)?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(err) = written {
+        // The file is ours (we just created it), so remove it rather than leave a partial vault.
+        let _ = fs::remove_file(path);
+        return Err(err.into());
+    }
+    sync_parent_dir(path)?;
+    Ok(())
+}
+
 fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = open_owner_only(path)?;
+    let mut file = open_owner_only(path, OpenMode::CreateOrTruncate)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
 
+#[derive(Clone, Copy)]
+enum OpenMode {
+    CreateOrTruncate,
+    CreateNew,
+}
+
+fn write_options(mode: OpenMode) -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.write(true);
+    match mode {
+        OpenMode::CreateOrTruncate => options.create(true).truncate(true),
+        OpenMode::CreateNew => options.create_new(true),
+    };
+    options
+}
+
 #[cfg(unix)]
-fn open_owner_only(path: &Path) -> io::Result<File> {
+fn open_owner_only(path: &Path, mode: OpenMode) -> io::Result<File> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
+    let file = write_options(mode).mode(0o600).open(path)?;
     file.set_permissions(fs::Permissions::from_mode(0o600))?;
     Ok(file)
 }
 
+/// Windows has no mode bits: a new file inherits the access rules of its folder. This
+/// relies on the vault living in the per-user app data folder, which only the user (plus
+/// administrators and SYSTEM) can access by default.
 #[cfg(not(unix))]
-fn open_owner_only(path: &Path) -> io::Result<File> {
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
+fn open_owner_only(path: &Path, mode: OpenMode) -> io::Result<File> {
+    write_options(mode).open(path)
 }
 
 #[cfg(unix)]
@@ -947,6 +974,30 @@ mod tests {
         assert!(buf.len() <= capacity, "{} > {}", buf.len(), capacity);
         assert_eq!(buf.capacity(), capacity);
         assert_eq!(&buf[..], &serde_json::to_vec(&data).unwrap()[..]);
+    }
+
+    #[test]
+    fn write_new_never_overwrites_an_existing_file() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        fs::write(&path, b"existing contents").unwrap();
+        assert_eq!(
+            write_new(&path, b"new contents").err(),
+            Some(VaultError::Io(io::ErrorKind::AlreadyExists))
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"existing contents");
+    }
+
+    #[test]
+    fn create_writes_only_the_vault_file() {
+        let dir = TestDir::new();
+        new_vault(&dir);
+        let names: Vec<String> = fs::read_dir(&dir.0)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["vault.quietkeys"]);
+        assert!(load(&dir.vault_path(), &password()).is_ok());
     }
 
     #[test]
