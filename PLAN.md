@@ -1,6 +1,6 @@
 # Password Manager — Build Plan (for Cursor)
 
-> Working name: **quitekeys** (rename freely). A local-only, encrypted desktop password manager for Windows and macOS.
+> Working name: **quietkeys** (rename freely). A local-only, encrypted desktop password manager for Windows and macOS.
 > This file is the single source of truth for the project. The AI assistant must read it before every task and follow it exactly.
 
 ---
@@ -131,7 +131,7 @@ Browser extension  ──(Native Messaging, stdio)──►  native-host binary 
 - **native-host** is a small separate Rust binary. The browser launches it and talks to it over stdin/stdout. It forwards validated messages to the running desktop app over a local socket and relays replies. It holds no secrets.
 - The native messaging host manifest lists **only this extension's ID** in `allowed_origins`.
 - The IPC socket/pipe is created in a user-only location, restricted to the current OS user.
-- If the desktop app is not running or the vault is locked, the extension shows "Unlock quitekeys on your computer" and does nothing else.
+- If the desktop app is not running or the vault is locked, the extension shows "Unlock quietkeys on your computer" and does nothing else.
 
 ### Pairing
 - The first time an extension connects, the desktop app shows an approval prompt with a 6-digit code. The user types the code into the extension to confirm.

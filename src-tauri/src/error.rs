@@ -23,7 +23,7 @@ impl fmt::Display for VaultError {
             VaultError::DecryptFailed => write!(f, "Incorrect password or corrupted vault"),
             VaultError::UnsupportedVersion(version) => write!(
                 f,
-                "Unsupported vault version {version}. It may have been created by a newer version of quitekeys"
+                "Unsupported vault version {version}. It may have been created by a newer version of quietkeys"
             ),
             VaultError::InvalidFormat => write!(f, "The vault file is not in a recognised format"),
             VaultError::InvalidKdfParams => {

@@ -340,7 +340,7 @@ mod tests {
             let mut id = [0u8; 8];
             crypto::fill_random(&mut id).unwrap();
             let dir = std::env::temp_dir()
-                .join(format!("quitekeys-test-{:016x}", u64::from_le_bytes(id)));
+                .join(format!("quietkeys-test-{:016x}", u64::from_le_bytes(id)));
             fs::create_dir_all(&dir).unwrap();
             Self(dir)
         }
