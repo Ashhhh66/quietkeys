@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -24,6 +24,7 @@ pub const FORMAT_VERSION: u32 = 1;
 pub const KDF_ALG: &str = "argon2id";
 pub const CIPHER_ALG: &str = "xchacha20poly1305";
 pub const VAULT_FILE_NAME: &str = "vault.quietkeys";
+pub const MIN_MASTER_PASSWORD_CHARS: usize = 12;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,11 +163,22 @@ pub fn create(path: &Path, password: &SecretString) -> Result<UnlockedVault> {
     create_with_params(path, password, KdfParams::default())
 }
 
+/// Rules for a new master password. Counts Unicode characters, not bytes.
+pub fn check_new_master_password(password: &SecretString) -> Result<()> {
+    if password.expose_secret().chars().count() < MIN_MASTER_PASSWORD_CHARS {
+        return Err(VaultError::PasswordTooShort {
+            min_chars: MIN_MASTER_PASSWORD_CHARS,
+        });
+    }
+    Ok(())
+}
+
 fn create_with_params(
     path: &Path,
     password: &SecretString,
     params: KdfParams,
 ) -> Result<UnlockedVault> {
+    check_new_master_password(password)?;
     if path.exists() {
         return Err(VaultError::Io(io::ErrorKind::AlreadyExists));
     }
@@ -755,6 +767,7 @@ mod tests {
         let path = dir.vault_path();
         let weak = MIN_PARAMS;
         let mut created = create_with_params(&path, &password(), weak).unwrap();
+        assert!(!created.needs_upgrade());
         created.data.entries.push(sample_entry(1));
         save(&mut created, &path).unwrap();
 
@@ -854,6 +867,39 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn master_password_must_be_at_least_12_characters() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let result = create_with_params(
+            &path,
+            &SecretString::from("a".repeat(11)),
+            KdfParams::fast(),
+        );
+        assert_eq!(
+            result.err(),
+            Some(VaultError::PasswordTooShort { min_chars: 12 })
+        );
+        assert!(!path.exists());
+
+        let vault = create_with_params(
+            &path,
+            &SecretString::from("a".repeat(12)),
+            KdfParams::fast(),
+        );
+        assert!(vault.is_ok());
+    }
+
+    #[test]
+    fn master_password_length_counts_characters_not_bytes() {
+        let eleven_multibyte = SecretString::from("é".repeat(11));
+        assert_eq!(
+            check_new_master_password(&eleven_multibyte),
+            Err(VaultError::PasswordTooShort { min_chars: 12 })
+        );
+        assert!(check_new_master_password(&SecretString::from("é".repeat(12))).is_ok());
     }
 
     #[test]

@@ -12,6 +12,10 @@ pub enum VaultError {
     UnsupportedVersion(u32),
     InvalidFormat,
     InvalidKdfParams,
+    /// A new master password is shorter than the minimum length.
+    PasswordTooShort {
+        min_chars: usize,
+    },
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -29,6 +33,10 @@ impl fmt::Display for VaultError {
             VaultError::InvalidKdfParams => {
                 write!(f, "The vault's key derivation settings are invalid")
             }
+            VaultError::PasswordTooShort { min_chars } => write!(
+                f,
+                "The master password must be at least {min_chars} characters long"
+            ),
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),
         }
