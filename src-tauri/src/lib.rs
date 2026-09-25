@@ -1,3 +1,7 @@
+pub mod crypto;
+pub mod error;
+pub mod vault;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
