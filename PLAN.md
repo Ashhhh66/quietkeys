@@ -26,6 +26,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 | Strength meter | `zxcvbn` crate |
 | Clipboard | `tauri-plugin-clipboard-manager` |
 | Serialization | `serde`, `serde_json`, `base64` |
+| Entry IDs and timestamps | `uuid` (v4 feature), `time` (RFC3339 formatting) |
 | Tests | `cargo test` (Rust), Vitest (frontend) |
 | Browser extension | Manifest V3, TypeScript, Vite (Chrome first, Firefox later) |
 | Extension ↔ app bridge | Browser Native Messaging + local IPC (`interprocess` crate: named pipe on Windows, Unix socket on macOS) |
@@ -35,7 +36,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 
 1. **Never invent cryptography.** Only use the crates listed above with their standard APIs.
 2. **The master password is never stored**, logged, or written to disk in any form.
-3. **Key derivation:** Argon2id with a random 16-byte salt. Default params: memory 64 MiB, iterations 3, parallelism 1. Params are stored in the vault header so they can be raised later.
+3. **Key derivation:** Argon2id with a random 16-byte salt. Default params: memory 64 MiB, iterations 3, parallelism 1. Params are stored in the vault header so they can be raised later. **Minimum params** (enforced in Rust; lower values are rejected outside tests): memory 19 MiB (`m_kib >= 19456`), iterations 2, parallelism 1. A vault unlocked with params weaker than the defaults is re-encrypted with a new salt and the default params on its next save.
 4. **Encryption:** XChaCha20-Poly1305 with a fresh random 24-byte nonce on **every** save. The serialized header is passed as associated data (AAD), so any tampering with the header or ciphertext makes decryption fail.
 5. **Wrong password = decryption failure.** No separate password hash or "verifier" is stored.
 6. **All crypto lives in Rust.** The encryption key never crosses to the frontend.
@@ -46,10 +47,11 @@ Build a desktop password manager that stores credentials in a single encrypted v
 11. **No network.** The app and extension make zero network requests. The extension talks to the desktop app only through browser Native Messaging and local IPC, never via a localhost HTTP server or open port. Tauri capabilities/permissions are locked down to only what is needed.
 12. **No secrets in logs, errors, or panics.** Error messages to the UI are generic ("Incorrect password or corrupted vault").
 13. **Vault location and permissions:** store the vault in the OS app data directory (via Tauri's path API), never next to the executable. On macOS/Linux set file permissions to owner-only (`0600`).
-14. **Keep a backup:** before every save, copy the current vault to `vault.quietkeys.bak`. Losing the vault means losing every password, so this is as important as the encryption.
+14. **Keep a backup:** before every save, copy the current vault to `vault.quietkeys.bak`, but only if it decrypts with the current key, so a corrupted file never replaces a good backup. Losing the vault means losing every password, so this is as important as the encryption.
 15. **Frontend hygiene:** the frontend holds revealed passwords only as long as they are on screen, and clears all state on lock. Right-click menus and text selection are disabled on hidden password fields.
 16. **Locked-down webview:** a strict Content Security Policy, devtools disabled in release builds, and Tauri capabilities granting only the plugins actually used.
 17. **Unlock throttling:** after 3 failed unlock attempts, add an increasing delay in the UI. (Argon2id already makes offline guessing slow; this just discourages casual guessing.)
+18. **Master password length:** a new master password must be at least 12 characters (Unicode characters, not bytes). This is enforced in Rust when creating a vault or changing the master password, not only in the UI.
 
 ## 4. Vault file format
 
@@ -184,6 +186,7 @@ Work through one phase at a time. Do not start the next phase until every accept
 ### Phase 2 — App state and commands
 - `state.rs` and `commands.rs` implementing the command table.
 - Locked-state checks on every protected command.
+- Entry IDs use the `uuid` crate (v4 feature) and timestamps use the `time` crate formatted as RFC3339. Do not hand-roll either.
 - **Tests required:** commands fail while locked; `lock()` clears state.
 
 ### Phase 3 — Core UI
@@ -201,7 +204,7 @@ Work through one phase at a time. Do not start the next phase until every accept
 - "Restore from backup" option on the unlock screen that loads `vault.quietkeys.bak`.
 - Encrypted export: save a copy of the vault to a location the user chooses (for their own backups). No plaintext export in the first version.
 - Auto-lock after 5 minutes idle (configurable) and on system sleep if feasible.
-- Change master password.
+- Change master password (new password must meet the 12-character minimum). This must immediately re-save `vault.quietkeys.bak` under the new key (with a new salt), so the old password can no longer unlock any file.
 - Strength meter on entry passwords.
 
 ### Phase 5 — Polish and publish
@@ -233,6 +236,10 @@ Work through one phase at a time. Do not start the next phase until every accept
 **Does not protect against:** malware or keyloggers on the user's machine; a weak master password; someone with access while the vault is unlocked; memory forensics on a compromised machine.
 
 **Known limitation:** the master password and revealed passwords pass through JavaScript strings in the webview, which cannot be reliably wiped from memory. Rust-side secrets are zeroized, but the frontend copies are only released to the garbage collector. Similarly, once a password is filled into a web page, that page's own scripts can read it; this is true of every password manager. A compromised browser or malicious extension with broad permissions is out of scope.
+
+**Known limitation:** serializing the vault before encryption can leave small fragments of plaintext in freed memory. The final buffer is wiped, and it is pre-allocated to an estimated size so it rarely has to grow and leave old copies behind.
+
+**Dependencies:** no pre-release crates are used. Checked on 2026-09-25: `argon2` 0.6.0, `chacha20poly1305` 0.11.0, `rand` 0.10.3 and `getrandom` 0.4.3 are all the latest stable releases, and `Cargo.lock` contains no `-rc`, `-pre`, `-alpha` or `-beta` versions.
 
 ## 7b. Git hygiene
 
