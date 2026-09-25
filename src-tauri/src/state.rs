@@ -2,7 +2,7 @@
 
 use std::mem;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 use secrecy::SecretString;
@@ -127,6 +127,9 @@ pub struct AppState {
     vault_path: PathBuf,
     unlocked: Mutex<Option<UnlockedVault>>,
     throttle: Mutex<ThrottleState>,
+    /// Held for the whole body of `create_vault`/`unlock`, so only one of either can run
+    /// at a time. Its data is unused; only the ability to lock it matters.
+    single_flight: Mutex<()>,
     clock: Arc<dyn Clock>,
 }
 
@@ -140,7 +143,24 @@ impl AppState {
             vault_path,
             unlocked: Mutex::new(None),
             throttle: Mutex::new(ThrottleState::default()),
+            single_flight: Mutex::new(()),
             clock,
+        }
+    }
+
+    /// Rejects a second concurrent `create_vault`/`unlock` call immediately as `Busy`,
+    /// before it can run Argon2 or touch the throttle. `try_lock` never waits, so a busy
+    /// caller finds out at once rather than blocking the UI thread.
+    fn enter_single_flight(&self) -> Result<MutexGuard<'_, ()>> {
+        match self.single_flight.try_lock() {
+            Ok(guard) => Ok(guard),
+            Err(TryLockError::WouldBlock) => Err(VaultError::Busy),
+            Err(TryLockError::Poisoned(poisoned)) => {
+                // A panic mid-derivation released the lock; nothing to restore (the data
+                // is just `()`), so just clear the poison and let this caller in.
+                self.single_flight.clear_poison();
+                Ok(poisoned.into_inner())
+            }
         }
     }
 
@@ -153,7 +173,10 @@ impl AppState {
     }
 
     /// Creates the vault file and leaves it unlocked.
+    ///
+    /// Fails with `Busy` if a `create_vault` or `unlock` call is already running.
     pub fn create_vault(&self, password: &SecretString) -> Result<()> {
+        let _slot = self.enter_single_flight()?;
         let vault = vault::create(&self.vault_path, password)?;
         *self.guard() = Some(vault);
         Ok(())
@@ -165,7 +188,11 @@ impl AppState {
     /// delay (1s, 2s, 4s, ..., capped at 30s) without touching the vault file or running
     /// Argon2. A correct password resets the count. Only a wrong password (not a corrupt
     /// or unreadable file) counts as an attempt.
+    ///
+    /// Fails with `Busy` if a `create_vault` or `unlock` call is already running; that
+    /// check happens first, so a busy call never touches the throttle either.
     pub fn unlock(&self, password: &SecretString) -> Result<()> {
+        let _slot = self.enter_single_flight()?;
         let now = self.clock.now();
         if let Some(seconds_remaining) = self.check_throttle(now) {
             return Err(VaultError::Throttled { seconds_remaining });
@@ -906,6 +933,139 @@ mod tests {
             state.unlock(&password()),
             Err(VaultError::Throttled { .. })
         ));
+    }
+
+    // --- Single-flight ---
+
+    #[test]
+    fn a_held_slot_rejects_unlock_and_create_vault_as_busy() {
+        let dir = TestDir::new();
+        let clock = FakeClock::new();
+        let state = unlocked_state_with_clock(&dir, clock.clone());
+        state.lock();
+
+        let slot = state.enter_single_flight().unwrap();
+
+        assert_eq!(state.unlock(&wrong_password()), Err(VaultError::Busy));
+        assert_eq!(state.create_vault(&password()), Err(VaultError::Busy));
+        // Neither call ran Argon2 or the throttle logic: no failure was recorded, and
+        // the vault file (a fresh create would refuse to overwrite it) is untouched.
+        assert_eq!(state.throttle_guard().consecutive_failures, 0);
+        assert_eq!(state.check_throttle(clock.now()), None);
+
+        drop(slot);
+        state.unlock(&password()).unwrap();
+        assert!(state.is_unlocked());
+    }
+
+    #[test]
+    fn concurrent_unlock_attempts_respect_the_throttle() {
+        let dir = TestDir::new();
+        let clock = FakeClock::new();
+        let state = Arc::new(unlocked_state_with_clock(&dir, clock.clone()));
+        state.lock();
+
+        // Several rounds of two threads racing for the single-flight slot. The loser of
+        // each race is rejected as Busy near-instantly (try_lock never waits), so
+        // normally exactly one real attempt gets through per round, but the assertions
+        // below hold regardless of exactly how many do in any given round.
+        let mut rounds: Vec<Vec<Result<()>>> = Vec::new();
+        for _ in 0..6 {
+            let barrier = Arc::new(std::sync::Barrier::new(2));
+            let handles: Vec<_> = (0..2)
+                .map(|_| {
+                    let state = Arc::clone(&state);
+                    let barrier = Arc::clone(&barrier);
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        state.unlock(&wrong_password())
+                    })
+                })
+                .collect();
+            rounds.push(handles.into_iter().map(|h| h.join().unwrap()).collect());
+        }
+
+        let all_results: Vec<&Result<()>> = rounds.iter().flat_map(|round| round.iter()).collect();
+
+        // Every attempt landed on one of the three expected outcomes.
+        for result in &all_results {
+            assert!(
+                matches!(
+                    result,
+                    Err(VaultError::DecryptFailed)
+                        | Err(VaultError::Busy)
+                        | Err(VaultError::Throttled { .. })
+                ),
+                "unexpected result: {result:?}"
+            );
+        }
+
+        // The throttle counted exactly the attempts that actually ran: Busy attempts
+        // never touched it, and single-flight means no two real attempts could race on
+        // updating it.
+        let real_failures = all_results
+            .iter()
+            .filter(|r| matches!(r, Err(VaultError::DecryptFailed)))
+            .count();
+        assert_eq!(
+            state.throttle_guard().consecutive_failures as usize,
+            real_failures
+        );
+
+        // Once any round produces a Throttled result, no later round ever gets a real
+        // attempt through as DecryptFailed: nothing bypasses an active throttle.
+        let mut throttle_seen = false;
+        for round in &rounds {
+            if throttle_seen {
+                assert!(
+                    !round
+                        .iter()
+                        .any(|r| matches!(r, Err(VaultError::DecryptFailed))),
+                    "a DecryptFailed happened after a throttle was already active: {round:?}"
+                );
+            }
+            if round
+                .iter()
+                .any(|r| matches!(r, Err(VaultError::Throttled { .. })))
+            {
+                throttle_seen = true;
+            }
+        }
+        assert!(
+            throttle_seen,
+            "the throttle never activated across 6 rounds: {all_results:?}"
+        );
+    }
+
+    #[test]
+    fn create_vault_and_unlock_share_the_single_flight_slot() {
+        let dir = TestDir::new();
+        let state = Arc::new(AppState::new(dir.vault_path()));
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+
+        let state_a = Arc::clone(&state);
+        let barrier_a = Arc::clone(&barrier);
+        let create = std::thread::spawn(move || {
+            barrier_a.wait();
+            state_a.create_vault(&password())
+        });
+
+        let state_b = Arc::clone(&state);
+        let barrier_b = Arc::clone(&barrier);
+        let unlock = std::thread::spawn(move || {
+            barrier_b.wait();
+            state_b.unlock(&wrong_password())
+        });
+
+        let create_result = create.join().unwrap();
+        let unlock_result = unlock.join().unwrap();
+
+        // Exactly one of the two got to run; the other was rejected as busy.
+        let busy_count = [&create_result, &unlock_result]
+            .into_iter()
+            .filter(|r| matches!(r, Err(VaultError::Busy)))
+            .count();
+        assert_eq!(busy_count, 1, "{create_result:?} / {unlock_result:?}");
     }
 
     // --- Poisoned lock ---

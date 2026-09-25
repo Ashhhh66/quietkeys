@@ -242,6 +242,8 @@ Work through one phase at a time. Do not start the next phase until every accept
 
 **Dependencies:** no pre-release crates are used. Checked on 2026-09-25: `argon2` 0.6.0, `chacha20poly1305` 0.11.0, `rand` 0.10.3 and `getrandom` 0.4.3 are all the latest stable releases, and `Cargo.lock` contains no `-rc`, `-pre`, `-alpha` or `-beta` versions.
 
+The unlock throttle is held in memory and resets when the app restarts; it slows guessing at the machine, while Argon2id protects a stolen vault file.
+
 ## 7b. Git hygiene
 
 - `.gitignore` must exclude `*.quietkeys`, `*.bak`, `target/`, `node_modules/` and any test vault output.

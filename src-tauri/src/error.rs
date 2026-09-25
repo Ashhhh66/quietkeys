@@ -32,6 +32,8 @@ pub enum VaultError {
     Throttled {
         seconds_remaining: u64,
     },
+    /// Another `create_vault`/`unlock` call is already running.
+    Busy,
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -51,6 +53,7 @@ impl VaultError {
             VaultError::EntryNotFound => "entry_not_found",
             VaultError::FieldTooLong { .. } => "field_too_long",
             VaultError::Throttled { .. } => "throttled",
+            VaultError::Busy => "busy",
             VaultError::Crypto => "crypto",
             VaultError::Io(_) => "io",
         }
@@ -86,6 +89,9 @@ impl fmt::Display for VaultError {
                 f,
                 "Too many incorrect attempts. Try again in {seconds_remaining} seconds"
             ),
+            VaultError::Busy => {
+                write!(f, "Another unlock or vault creation is already in progress")
+            }
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),
         }
