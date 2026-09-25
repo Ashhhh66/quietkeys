@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -163,9 +163,15 @@ pub fn create(path: &Path, password: &SecretString) -> Result<UnlockedVault> {
     create_with_params(path, password, KdfParams::default())
 }
 
-/// Rules for a new master password. Counts Unicode characters, not bytes.
+/// Rules for a new master password, applied to the normalized form: at least
+/// `MIN_MASTER_PASSWORD_CHARS` Unicode characters (not bytes) and no control characters.
+/// Not applied at unlock, so an existing password is never locked out by a rule change.
 pub fn check_new_master_password(password: &SecretString) -> Result<()> {
-    if password.expose_secret().chars().count() < MIN_MASTER_PASSWORD_CHARS {
+    let normalized = crypto::normalize_password(password);
+    if normalized.chars().any(char::is_control) {
+        return Err(VaultError::PasswordHasControlCharacter);
+    }
+    if normalized.chars().count() < MIN_MASTER_PASSWORD_CHARS {
         return Err(VaultError::PasswordTooShort {
             min_chars: MIN_MASTER_PASSWORD_CHARS,
         });
@@ -956,6 +962,88 @@ mod tests {
             Err(VaultError::PasswordTooShort { min_chars: 12 })
         );
         assert!(check_new_master_password(&SecretString::from("é".repeat(12))).is_ok());
+    }
+
+    #[test]
+    fn master_password_length_is_counted_after_normalization() {
+        // 22 code points, but 11 characters once each e + accent is composed.
+        let eleven_decomposed = SecretString::from("e\u{301}".repeat(11));
+        assert_eq!(
+            check_new_master_password(&eleven_decomposed),
+            Err(VaultError::PasswordTooShort { min_chars: 12 })
+        );
+        assert!(check_new_master_password(&SecretString::from("e\u{301}".repeat(12))).is_ok());
+    }
+
+    #[test]
+    fn new_master_password_with_control_character_is_rejected() {
+        for pw in [
+            "correct horse\tbattery",
+            "correct horse\nbattery",
+            "correct horse battery\u{7f}",
+            "\u{0}correct horse battery",
+            "correct horse\u{85}battery",
+        ] {
+            assert_eq!(
+                check_new_master_password(&SecretString::from(pw)),
+                Err(VaultError::PasswordHasControlCharacter),
+                "{pw:?}"
+            );
+        }
+        let dir = TestDir::new();
+        let result = create_with_params(
+            &dir.vault_path(),
+            &SecretString::from("correct horse\tbattery"),
+            KdfParams::fast(),
+        );
+        assert_eq!(result.err(), Some(VaultError::PasswordHasControlCharacter));
+        assert!(!dir.vault_path().exists());
+    }
+
+    fn assert_created_with_unlocks_with(created_with: &str, unlocks_with: &str) {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut vault =
+            create_with_params(&path, &SecretString::from(created_with), KdfParams::fast())
+                .unwrap();
+        vault.data.entries.push(sample_entry(1));
+        save(&mut vault, &path).unwrap();
+        let loaded = load(&path, &SecretString::from(unlocks_with)).unwrap();
+        assert_eq!(loaded.data, vault.data);
+    }
+
+    #[test]
+    fn composed_accent_vault_unlocks_with_decomposed_accent() {
+        assert_created_with_unlocks_with("caf\u{e9} au lait 2026", "cafe\u{301} au lait 2026");
+    }
+
+    #[test]
+    fn decomposed_accent_vault_unlocks_with_composed_accent() {
+        assert_created_with_unlocks_with("cafe\u{301} au lait 2026", "caf\u{e9} au lait 2026");
+    }
+
+    #[test]
+    fn non_breaking_space_vault_unlocks_with_normal_space() {
+        assert_created_with_unlocks_with("correct\u{a0}horse battery", "correct horse battery");
+    }
+
+    #[test]
+    fn normal_space_vault_unlocks_with_non_breaking_space() {
+        assert_created_with_unlocks_with("correct horse battery", "correct\u{a0}horse battery");
+    }
+
+    #[test]
+    fn different_accents_still_fail_to_unlock() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        create_with_params(
+            &path,
+            &SecretString::from("caf\u{e9} au lait 2026"),
+            KdfParams::fast(),
+        )
+        .unwrap();
+        let result = load(&path, &SecretString::from("caf\u{e8} au lait 2026"));
+        assert_eq!(result.err(), Some(VaultError::DecryptFailed));
     }
 
     #[test]

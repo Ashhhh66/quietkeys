@@ -4,6 +4,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use secrecy::{ExposeSecret, SecretString};
+use unicode_normalization::UnicodeNormalization;
 use zeroize::Zeroizing;
 
 use crate::error::{Result, VaultError};
@@ -111,7 +112,38 @@ pub fn random_salt() -> Result<[u8; SALT_LEN]> {
     Ok(salt)
 }
 
-/// Stretches the master password into a 256-bit key with Argon2id.
+/// Unicode general category Zs (space separators), unchanged since Unicode 6.3.
+const SPACE_SEPARATORS: [char; 17] = [
+    '\u{0020}', '\u{00A0}', '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}',
+    '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}', '\u{2009}', '\u{200A}', '\u{202F}', '\u{205F}',
+    '\u{3000}',
+];
+
+/// Maps every space separator to U+0020, then applies NFC, following the order of
+/// RFC 8265's OpaqueString profile (only these two rules, not the full profile).
+/// The same password typed with a composed or decomposed accent, or with a
+/// non-breaking space, gives the same result.
+pub fn normalize_password(password: &SecretString) -> Zeroizing<String> {
+    let raw = password.expose_secret();
+    // NFC output is at most 3x the input's UTF-8 length, so this buffer never
+    // reallocates and leaves an unwiped copy behind.
+    let mut normalized = Zeroizing::new(String::with_capacity(raw.len() * 3));
+    normalized.extend(
+        raw.chars()
+            .map(|c| {
+                if SPACE_SEPARATORS.contains(&c) {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .nfc(),
+    );
+    normalized
+}
+
+/// Stretches the master password into a 256-bit key with Argon2id. The password is
+/// normalized first (see `normalize_password`).
 pub fn derive_key(
     password: &SecretString,
     salt: &[u8; SALT_LEN],
@@ -122,9 +154,10 @@ pub fn derive_key(
         Version::V0x13,
         params.to_argon2_params()?,
     );
+    let normalized = normalize_password(password);
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon2
-        .hash_password_into(password.expose_secret().as_bytes(), salt, &mut key[..])
+        .hash_password_into(normalized.as_bytes(), salt, &mut key[..])
         .map_err(|_| VaultError::Crypto)?;
     Ok(key)
 }
@@ -183,6 +216,77 @@ mod tests {
             &KdfParams::fast(),
         )
         .unwrap()
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn ascii_password_key_is_unchanged_by_normalization() {
+        // Recorded from derive_key before normalization was added.
+        let key = derive_key(
+            &password("correct horse battery staple"),
+            &[7u8; SALT_LEN],
+            &KdfParams::fast(),
+        )
+        .unwrap();
+        assert_eq!(
+            hex(&key[..]),
+            "96a88be15c9689b19b1453a1b6a93f5c630c5adf3fde1bd9ad08ceb8e81ada54"
+        );
+    }
+
+    #[test]
+    fn ascii_password_matches_raw_argon2id() {
+        let pw = "Plain ASCII password 123!";
+        let salt = [3u8; SALT_LEN];
+        let params = KdfParams::fast();
+        let mut raw = [0u8; KEY_LEN];
+        Argon2::new(
+            Algorithm::Argon2id,
+            Version::V0x13,
+            params.to_argon2_params().unwrap(),
+        )
+        .hash_password_into(pw.as_bytes(), &salt, &mut raw)
+        .unwrap();
+        assert_eq!(*derive_key(&password(pw), &salt, &params).unwrap(), raw);
+    }
+
+    #[test]
+    fn composed_and_decomposed_accents_derive_the_same_key() {
+        let salt = [1u8; SALT_LEN];
+        let composed = derive_key(&password("caf\u{e9}"), &salt, &KdfParams::fast()).unwrap();
+        let decomposed = derive_key(&password("cafe\u{301}"), &salt, &KdfParams::fast()).unwrap();
+        assert_eq!(*composed, *decomposed);
+        assert_eq!(
+            &normalize_password(&password("cafe\u{301}"))[..],
+            "caf\u{e9}"
+        );
+    }
+
+    #[test]
+    fn every_space_separator_maps_to_ascii_space() {
+        let salt = [2u8; SALT_LEN];
+        let plain = derive_key(&password("a b"), &salt, &KdfParams::fast()).unwrap();
+        for space in SPACE_SEPARATORS {
+            let pw = password(&format!("a{space}b"));
+            assert_eq!(
+                &normalize_password(&pw)[..],
+                "a b",
+                "U+{:04X}",
+                space as u32
+            );
+            assert_eq!(*derive_key(&pw, &salt, &KdfParams::fast()).unwrap(), *plain);
+        }
+    }
+
+    #[test]
+    fn other_whitespace_is_not_mapped() {
+        for c in ['\t', '\n', '\u{2028}', '\u{200B}'] {
+            let pw = password(&format!("a{c}b"));
+            assert_eq!(&normalize_password(&pw)[..], format!("a{c}b"));
+        }
     }
 
     #[test]

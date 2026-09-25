@@ -27,6 +27,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 | Clipboard | `tauri-plugin-clipboard-manager` |
 | Serialization | `serde`, `serde_json`, `base64` |
 | Entry IDs and timestamps | `uuid` (v4 feature), `time` (RFC3339 formatting) |
+| Password normalisation | `unicode-normalization` (NFC) |
 | Tests | `cargo test` (Rust), Vitest (frontend) |
 | Browser extension | Manifest V3, TypeScript, Vite (Chrome first, Firefox later) |
 | Extension ↔ app bridge | Browser Native Messaging + local IPC (`interprocess` crate: named pipe on Windows, Unix socket on macOS) |
@@ -36,7 +37,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 
 1. **Never invent cryptography.** Only use the crates listed above with their standard APIs.
 2. **The master password is never stored**, logged, or written to disk in any form.
-3. **Key derivation:** Argon2id with a random 16-byte salt. Default params: memory 64 MiB, iterations 3, parallelism 1. Params are stored in the vault header so they can be raised later. **Minimum params** (enforced in Rust; lower values are rejected outside tests): memory 19 MiB (`m_kib >= 19456`), iterations 2, parallelism 1. A vault unlocked with params weaker than the defaults is re-encrypted with a new salt and the default params on its next save.
+3. **Key derivation:** Argon2id with a random 16-byte salt. Default params: memory 64 MiB, iterations 3, parallelism 1. Params are stored in the vault header so they can be raised later. **Minimum params** (enforced in Rust; lower values are rejected outside tests): memory 19 MiB (`m_kib >= 19456`), iterations 2, parallelism 1. A vault unlocked with params weaker than the defaults is re-encrypted with a new salt and the default params on its next save. The master password is normalised to NFC and non-ASCII spaces are mapped to U+0020, based on RFC 8265's OpaqueString profile (not a full implementation). New master passwords may not contain control characters.
 4. **Encryption:** XChaCha20-Poly1305 with a fresh random 24-byte nonce on **every** save. The serialized header is passed as associated data (AAD), so any tampering with the header or ciphertext makes decryption fail.
 5. **Wrong password = decryption failure.** No separate password hash or "verifier" is stored.
 6. **All crypto lives in Rust.** The encryption key never crosses to the frontend.
@@ -51,7 +52,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 15. **Frontend hygiene:** the frontend holds revealed passwords only as long as they are on screen, and clears all state on lock. Right-click menus and text selection are disabled on hidden password fields.
 16. **Locked-down webview:** a strict Content Security Policy, devtools disabled in release builds, and Tauri capabilities granting only the plugins actually used.
 17. **Unlock throttling:** after 3 failed unlock attempts, add an increasing delay in the UI. (Argon2id already makes offline guessing slow; this just discourages casual guessing.)
-18. **Master password length:** a new master password must be at least 12 characters (Unicode characters, not bytes). This is enforced in Rust when creating a vault or changing the master password, not only in the UI.
+18. **Master password length:** a new master password must be at least 12 characters (Unicode characters, not bytes, counted after normalisation). This is enforced in Rust when creating a vault or changing the master password, not only in the UI.
 
 ## 4. Vault file format
 

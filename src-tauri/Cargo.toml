@@ -30,6 +30,7 @@ zxcvbn = "3.1.1"
 base64 = "0.23.1"
 tauri-plugin-clipboard-manager = "2.3.3"
 zeroize = { version = "1.9.0", features = ["derive"] }
+unicode-normalization = "0.1.25"
 
 # Argon2 is unusably slow unoptimized: keeps unlock and tests with real params fast.
 [profile.dev.package.argon2]

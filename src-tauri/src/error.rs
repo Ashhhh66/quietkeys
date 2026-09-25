@@ -16,6 +16,8 @@ pub enum VaultError {
     PasswordTooShort {
         min_chars: usize,
     },
+    /// A new master password contains a control character (Unicode category Cc).
+    PasswordHasControlCharacter,
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -36,6 +38,10 @@ impl fmt::Display for VaultError {
             VaultError::PasswordTooShort { min_chars } => write!(
                 f,
                 "The master password must be at least {min_chars} characters long"
+            ),
+            VaultError::PasswordHasControlCharacter => write!(
+                f,
+                "The master password cannot contain control characters such as tabs or line breaks"
             ),
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),
