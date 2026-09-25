@@ -18,6 +18,24 @@ const MAX_M_KIB: u32 = 1024 * 1024;
 const MAX_T: u32 = 64;
 const MAX_P: u32 = 16;
 
+/// The weakest Argon2id params accepted in real builds.
+pub const MIN_PARAMS: KdfParams = KdfParams {
+    m_kib: 19 * 1024,
+    t: 2,
+    p: 1,
+};
+
+#[cfg(not(test))]
+const ENFORCED_MIN: KdfParams = MIN_PARAMS;
+
+// Lets tests use `KdfParams::fast()`. Real builds always enforce `MIN_PARAMS`.
+#[cfg(test)]
+const ENFORCED_MIN: KdfParams = KdfParams {
+    m_kib: 8,
+    t: 1,
+    p: 1,
+};
+
 /// A 256-bit encryption key that is wiped from memory when dropped.
 pub type Key = Zeroizing<[u8; KEY_LEN]>;
 
@@ -55,10 +73,28 @@ impl KdfParams {
 }
 
 impl KdfParams {
-    fn to_argon2_params(self) -> Result<Params> {
-        if self.m_kib > MAX_M_KIB || self.t > MAX_T || self.p > MAX_P {
-            return Err(VaultError::InvalidKdfParams);
+    /// Each cost raised to at least `floor`'s value. Costs already above it are kept.
+    pub fn raised_to(self, floor: &KdfParams) -> KdfParams {
+        KdfParams {
+            m_kib: self.m_kib.max(floor.m_kib),
+            t: self.t.max(floor.t),
+            p: self.p.max(floor.p),
         }
+    }
+
+    fn check_bounds(self, min: &KdfParams) -> Result<()> {
+        let in_range = (min.m_kib..=MAX_M_KIB).contains(&self.m_kib)
+            && (min.t..=MAX_T).contains(&self.t)
+            && (min.p..=MAX_P).contains(&self.p);
+        if in_range {
+            Ok(())
+        } else {
+            Err(VaultError::InvalidKdfParams)
+        }
+    }
+
+    fn to_argon2_params(self) -> Result<Params> {
+        self.check_bounds(&ENFORCED_MIN)?;
         Params::new(self.m_kib, self.t, self.p, Some(KEY_LEN))
             .map_err(|_| VaultError::InvalidKdfParams)
     }
@@ -228,6 +264,60 @@ mod tests {
                 "{params:?}"
             );
         }
+    }
+
+    #[test]
+    fn production_minimums_match_the_security_design() {
+        assert_eq!(
+            MIN_PARAMS,
+            KdfParams {
+                m_kib: 19456,
+                t: 2,
+                p: 1
+            }
+        );
+        assert!(KdfParams::default().check_bounds(&MIN_PARAMS).is_ok());
+        assert!(MIN_PARAMS.check_bounds(&MIN_PARAMS).is_ok());
+    }
+
+    #[test]
+    fn params_below_production_minimum_are_rejected() {
+        let below = [
+            KdfParams {
+                m_kib: MIN_PARAMS.m_kib - 1,
+                ..MIN_PARAMS
+            },
+            KdfParams { t: 1, ..MIN_PARAMS },
+            KdfParams { p: 0, ..MIN_PARAMS },
+            KdfParams::fast(),
+        ];
+        for params in below {
+            assert_eq!(
+                params.check_bounds(&MIN_PARAMS),
+                Err(VaultError::InvalidKdfParams),
+                "{params:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn raised_to_only_increases_costs() {
+        let default = KdfParams::default();
+        assert_eq!(MIN_PARAMS.raised_to(&default), default);
+        assert_eq!(default.raised_to(&default), default);
+        let stronger_memory = KdfParams {
+            m_kib: 128 * 1024,
+            t: 2,
+            p: 1,
+        };
+        assert_eq!(
+            stronger_memory.raised_to(&default),
+            KdfParams {
+                m_kib: 128 * 1024,
+                t: 3,
+                p: 1
+            }
+        );
     }
 
     #[test]

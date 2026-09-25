@@ -134,11 +134,25 @@ pub struct UnlockedVault {
     header: Header,
     key: Key,
     pub data: VaultData,
+    upgrade: Option<PendingUpgrade>,
+}
+
+/// A stronger header and key, prepared at unlock time (the only time the password is
+/// available) and switched to on the next successful save.
+struct PendingUpgrade {
+    header: Header,
+    key: Key,
 }
 
 impl UnlockedVault {
     pub fn header(&self) -> &Header {
         &self.header
+    }
+
+    /// True if the vault was unlocked with params weaker than the defaults and will be
+    /// re-encrypted with a new salt and the default params on the next save.
+    pub fn needs_upgrade(&self) -> bool {
+        self.upgrade.is_some()
     }
 }
 
@@ -156,6 +170,19 @@ fn create_with_params(
     if path.exists() {
         return Err(VaultError::Io(io::ErrorKind::AlreadyExists));
     }
+    let (header, key) = new_header_and_key(password, params)?;
+    let mut vault = UnlockedVault {
+        header,
+        key,
+        data: VaultData::default(),
+        upgrade: None,
+    };
+    save(&mut vault, path)?;
+    Ok(vault)
+}
+
+/// A fresh salt, a key derived from it, and the matching header.
+fn new_header_and_key(password: &SecretString, params: KdfParams) -> Result<(Header, Key)> {
     let salt = crypto::random_salt()?;
     let key = crypto::derive_key(password, &salt, &params)?;
     let header = Header {
@@ -171,13 +198,17 @@ fn create_with_params(
             alg: CIPHER_ALG.to_string(),
         },
     };
-    let vault = UnlockedVault {
-        header,
-        key,
-        data: VaultData::default(),
-    };
-    save(&vault, path)?;
-    Ok(vault)
+    Ok((header, key))
+}
+
+fn prepare_upgrade(password: &SecretString, header: &Header) -> Result<Option<PendingUpgrade>> {
+    let current = header.kdf_params();
+    let target = current.raised_to(&KdfParams::default());
+    if target == current {
+        return Ok(None);
+    }
+    let (header, key) = new_header_and_key(password, target)?;
+    Ok(Some(PendingUpgrade { header, key }))
 }
 
 /// Reads, authenticates and decrypts the vault at `path`.
@@ -191,8 +222,14 @@ pub fn load(path: &Path, password: &SecretString) -> Result<UnlockedVault> {
     let plaintext = decrypt_file(&file, &key)?;
     let data: VaultData =
         serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
+    let upgrade = prepare_upgrade(password, &header)?;
 
-    Ok(UnlockedVault { header, key, data })
+    Ok(UnlockedVault {
+        header,
+        key,
+        data,
+        upgrade,
+    })
 }
 
 /// Authenticates and decrypts a parsed file with an already-derived key.
@@ -216,22 +253,15 @@ fn is_good_vault(bytes: &[u8], key: &Key) -> bool {
 ///
 /// Before writing, the current file is copied to `<path>.bak`, but only if it decrypts
 /// with this vault's key. A corrupted or foreign file never replaces a good backup.
-pub fn save(vault: &UnlockedVault, path: &Path) -> Result<()> {
-    let plaintext =
-        Zeroizing::new(serde_json::to_vec(&vault.data).map_err(|_| VaultError::InvalidFormat)?);
-    let aad = aad_bytes(&vault.header)?;
-    let (nonce, ciphertext) = crypto::encrypt(&vault.key, &aad, &plaintext)?;
-
-    let file = VaultFile {
-        version: vault.header.version,
-        kdf: vault.header.kdf.clone(),
-        cipher: CipherSection {
-            alg: vault.header.cipher.alg.clone(),
-            nonce: B64.encode(nonce),
-        },
-        ciphertext: B64.encode(ciphertext),
+///
+/// If an upgrade is pending, the new file uses the upgraded header and key, and the vault
+/// switches to them once the write has succeeded.
+pub fn save(vault: &mut UnlockedVault, path: &Path) -> Result<()> {
+    let (header, key) = match &vault.upgrade {
+        Some(upgrade) => (&upgrade.header, &upgrade.key),
+        None => (&vault.header, &vault.key),
     };
-    let bytes = serde_json::to_vec_pretty(&file).map_err(|_| VaultError::InvalidFormat)?;
+    let bytes = encrypt_to_file_bytes(&vault.data, header, key)?;
 
     if path.exists() {
         let current = fs::read(path)?;
@@ -239,7 +269,31 @@ pub fn save(vault: &UnlockedVault, path: &Path) -> Result<()> {
             write_atomic(&backup_path(path), &current)?;
         }
     }
-    write_atomic(path, &bytes)
+    write_atomic(path, &bytes)?;
+
+    if let Some(upgrade) = vault.upgrade.take() {
+        vault.header = upgrade.header;
+        vault.key = upgrade.key;
+    }
+    Ok(())
+}
+
+fn encrypt_to_file_bytes(data: &VaultData, header: &Header, key: &Key) -> Result<Vec<u8>> {
+    let plaintext =
+        Zeroizing::new(serde_json::to_vec(data).map_err(|_| VaultError::InvalidFormat)?);
+    let aad = aad_bytes(header)?;
+    let (nonce, ciphertext) = crypto::encrypt(key, &aad, &plaintext)?;
+
+    let file = VaultFile {
+        version: header.version,
+        kdf: header.kdf.clone(),
+        cipher: CipherSection {
+            alg: header.cipher.alg.clone(),
+            nonce: B64.encode(nonce),
+        },
+        ciphertext: B64.encode(ciphertext),
+    };
+    serde_json::to_vec_pretty(&file).map_err(|_| VaultError::InvalidFormat)
 }
 
 pub fn backup_path(path: &Path) -> PathBuf {
@@ -344,6 +398,7 @@ fn sync_parent_dir(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::MIN_PARAMS;
 
     const PASSWORD: &str = "correct horse battery staple";
 
@@ -396,7 +451,7 @@ mod tests {
         let mut vault = new_vault(dir);
         vault.data.entries.push(sample_entry(1));
         vault.data.entries.push(sample_entry(2));
-        save(&vault, &dir.vault_path()).unwrap();
+        save(&mut vault, &dir.vault_path()).unwrap();
         vault
     }
 
@@ -589,10 +644,10 @@ mod tests {
     #[test]
     fn two_saves_of_identical_data_differ() {
         let dir = TestDir::new();
-        let vault = new_vault_with_entries(&dir);
+        let mut vault = new_vault_with_entries(&dir);
         let path = dir.vault_path();
         let first = read_json(&path);
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
         let second = read_json(&path);
 
         assert_ne!(first["cipher"]["nonce"], second["cipher"]["nonce"]);
@@ -611,7 +666,7 @@ mod tests {
         // A directory where the temp file should go makes the write fail.
         fs::create_dir(temp_path(&path)).unwrap();
         vault.data.entries.push(sample_entry(3));
-        assert!(save(&vault, &path).is_err());
+        assert!(save(&mut vault, &path).is_err());
 
         assert_eq!(fs::read(&path).unwrap(), before);
         let loaded = load(&path, &password()).unwrap();
@@ -626,12 +681,12 @@ mod tests {
         assert!(!backup_path(&path).exists());
 
         vault.data.entries.push(sample_entry(1));
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
         let backup = load(&backup_path(&path), &password()).unwrap();
         assert!(backup.data.entries.is_empty());
 
         vault.data.entries.push(sample_entry(2));
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
         let backup = load(&backup_path(&path), &password()).unwrap();
         assert_eq!(backup.data.entries.len(), 1);
         assert_eq!(load(&path, &password()).unwrap().data.entries.len(), 2);
@@ -643,12 +698,12 @@ mod tests {
         let path = dir.vault_path();
         let mut vault = new_vault(&dir);
         vault.data.entries.push(sample_entry(1));
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
         let good_backup = fs::read(backup_path(&path)).unwrap();
 
         fs::write(&path, b"{ this is not a vault").unwrap();
         vault.data.entries.push(sample_entry(2));
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
 
         assert_eq!(fs::read(backup_path(&path)).unwrap(), good_backup);
         let backup = load(&backup_path(&path), &password()).unwrap();
@@ -662,13 +717,13 @@ mod tests {
         let path = dir.vault_path();
         let mut vault = new_vault(&dir);
         vault.data.entries.push(sample_entry(1));
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
         let good_backup = fs::read(backup_path(&path)).unwrap();
 
         let mut json = read_json(&path);
         json["kdf"]["t"] = Value::from(2);
         write_json(&path, &json);
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
 
         assert_eq!(fs::read(backup_path(&path)).unwrap(), good_backup);
     }
@@ -677,21 +732,83 @@ mod tests {
     fn vault_from_another_key_is_not_backed_up() {
         let dir = TestDir::new();
         let path = dir.vault_path();
-        let vault = new_vault(&dir);
+        let mut vault = new_vault(&dir);
 
         let other_dir = TestDir::new();
-        let other = create_with_params(
+        let mut other = create_with_params(
             &other_dir.vault_path(),
             &SecretString::from("a completely different password"),
             KdfParams::fast(),
         )
         .unwrap();
-        save(&other, &path).unwrap();
+        save(&mut other, &path).unwrap();
         assert!(!backup_path(&path).exists());
 
-        save(&vault, &path).unwrap();
+        save(&mut vault, &path).unwrap();
         assert!(!backup_path(&path).exists());
         assert!(load(&path, &password()).is_ok());
+    }
+
+    #[test]
+    fn weaker_vault_is_upgraded_to_defaults_on_next_save() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let weak = MIN_PARAMS;
+        let mut created = create_with_params(&path, &password(), weak).unwrap();
+        created.data.entries.push(sample_entry(1));
+        save(&mut created, &path).unwrap();
+
+        let mut loaded = load(&path, &password()).unwrap();
+        assert!(loaded.needs_upgrade());
+        assert_eq!(loaded.header().kdf_params(), weak);
+        let old_salt = loaded.header().kdf.salt.clone();
+        assert_eq!(read_json(&path)["kdf"]["m_kib"], weak.m_kib);
+
+        save(&mut loaded, &path).unwrap();
+        assert!(!loaded.needs_upgrade());
+        assert_eq!(loaded.header().kdf_params(), KdfParams::default());
+        assert_ne!(loaded.header().kdf.salt, old_salt);
+
+        let reloaded = load(&path, &password()).unwrap();
+        assert!(!reloaded.needs_upgrade());
+        assert_eq!(reloaded.header().kdf_params(), KdfParams::default());
+        assert_eq!(reloaded.data, loaded.data);
+        assert_eq!(
+            load(&path, &SecretString::from("wrong password")).err(),
+            Some(VaultError::DecryptFailed)
+        );
+
+        let backup = load(&backup_path(&path), &password()).unwrap();
+        assert_eq!(backup.header().kdf_params(), weak);
+        assert_eq!(backup.data, loaded.data);
+    }
+
+    #[test]
+    fn failed_save_keeps_upgrade_pending() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        create_with_params(&path, &password(), MIN_PARAMS).unwrap();
+        let mut loaded = load(&path, &password()).unwrap();
+
+        fs::create_dir(temp_path(&path)).unwrap();
+        assert!(save(&mut loaded, &path).is_err());
+        assert!(loaded.needs_upgrade());
+        assert_eq!(loaded.header().kdf_params(), MIN_PARAMS);
+
+        fs::remove_dir(temp_path(&path)).unwrap();
+        save(&mut loaded, &path).unwrap();
+        assert_eq!(loaded.header().kdf_params(), KdfParams::default());
+        assert!(load(&path, &password()).is_ok());
+    }
+
+    #[test]
+    fn vault_with_default_params_is_not_marked_for_upgrade() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        create(&path, &password()).unwrap();
+        let loaded = load(&path, &password()).unwrap();
+        assert!(!loaded.needs_upgrade());
+        assert_eq!(loaded.header().kdf_params(), KdfParams::default());
     }
 
     #[test]
@@ -710,8 +827,8 @@ mod tests {
     #[test]
     fn no_temp_files_left_after_save() {
         let dir = TestDir::new();
-        let vault = new_vault_with_entries(&dir);
-        save(&vault, &dir.vault_path()).unwrap();
+        let mut vault = new_vault_with_entries(&dir);
+        save(&mut vault, &dir.vault_path()).unwrap();
         let mut names: Vec<String> = fs::read_dir(&dir.0)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -761,8 +878,8 @@ mod tests {
     fn vault_and_backup_are_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let dir = TestDir::new();
-        let vault = new_vault(&dir);
-        save(&vault, &dir.vault_path()).unwrap();
+        let mut vault = new_vault(&dir);
+        save(&mut vault, &dir.vault_path()).unwrap();
         for path in [dir.vault_path(), backup_path(&dir.vault_path())] {
             let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600, "{}", path.display());
