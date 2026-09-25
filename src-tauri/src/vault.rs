@@ -23,7 +23,7 @@ use crate::error::{Result, VaultError};
 pub const FORMAT_VERSION: u32 = 1;
 pub const KDF_ALG: &str = "argon2id";
 pub const CIPHER_ALG: &str = "xchacha20poly1305";
-pub const VAULT_FILE_NAME: &str = "vault.qk";
+pub const VAULT_FILE_NAME: &str = "vault.quietkeys";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -624,9 +624,15 @@ mod tests {
 
     #[test]
     fn backup_and_temp_paths_sit_next_to_vault() {
-        let path = Path::new("dir").join("vault.qk");
-        assert_eq!(backup_path(&path), Path::new("dir").join("vault.qk.bak"));
-        assert_eq!(temp_path(&path), Path::new("dir").join("vault.qk.tmp"));
+        let path = Path::new("dir").join("vault.quietkeys");
+        assert_eq!(
+            backup_path(&path),
+            Path::new("dir").join("vault.quietkeys.bak")
+        );
+        assert_eq!(
+            temp_path(&path),
+            Path::new("dir").join("vault.quietkeys.tmp")
+        );
     }
 
     #[test]
@@ -639,7 +645,7 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        assert_eq!(names, ["vault.qk", "vault.qk.bak"]);
+        assert_eq!(names, ["vault.quietkeys", "vault.quietkeys.bak"]);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 # Vault files and backups: never commit these, even encrypted
-*.qk
+*.quietkeys
 *.bak
 *.tmp
 test-output/

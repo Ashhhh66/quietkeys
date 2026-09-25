@@ -46,14 +46,14 @@ Build a desktop password manager that stores credentials in a single encrypted v
 11. **No network.** The app and extension make zero network requests. The extension talks to the desktop app only through browser Native Messaging and local IPC, never via a localhost HTTP server or open port. Tauri capabilities/permissions are locked down to only what is needed.
 12. **No secrets in logs, errors, or panics.** Error messages to the UI are generic ("Incorrect password or corrupted vault").
 13. **Vault location and permissions:** store the vault in the OS app data directory (via Tauri's path API), never next to the executable. On macOS/Linux set file permissions to owner-only (`0600`).
-14. **Keep a backup:** before every save, copy the current vault to `vault.qk.bak`. Losing the vault means losing every password, so this is as important as the encryption.
+14. **Keep a backup:** before every save, copy the current vault to `vault.quietkeys.bak`. Losing the vault means losing every password, so this is as important as the encryption.
 15. **Frontend hygiene:** the frontend holds revealed passwords only as long as they are on screen, and clears all state on lock. Right-click menus and text selection are disabled on hidden password fields.
 16. **Locked-down webview:** a strict Content Security Policy, devtools disabled in release builds, and Tauri capabilities granting only the plugins actually used.
 17. **Unlock throttling:** after 3 failed unlock attempts, add an increasing delay in the UI. (Argon2id already makes offline guessing slow; this just discourages casual guessing.)
 
 ## 4. Vault file format
 
-A single JSON file, e.g. `vault.qk`:
+A single JSON file, e.g. `vault.quietkeys`:
 
 ```json
 {
@@ -198,7 +198,7 @@ Work through one phase at a time. Do not start the next phase until every accept
 - Password generator: length 8–128, toggles for upper/lower/digits/symbols, option to exclude ambiguous characters, no modulo bias.
 - Copy to clipboard, auto-clear after 30 seconds **only if** the clipboard still contains that password.
 - Stop copied passwords landing in clipboard history: on Windows, mark the clipboard data with the `ExcludeClipboardContentFromMonitorProcessing` format so Win+V history and cloud clipboard skip it; on macOS, add the `org.nspasteboard.ConcealedType` marker. This may need small platform-specific Rust code instead of the clipboard plugin.
-- "Restore from backup" option on the unlock screen that loads `vault.qk.bak`.
+- "Restore from backup" option on the unlock screen that loads `vault.quietkeys.bak`.
 - Encrypted export: save a copy of the vault to a location the user chooses (for their own backups). No plaintext export in the first version.
 - Auto-lock after 5 minutes idle (configurable) and on system sleep if feasible.
 - Change master password.
@@ -236,7 +236,7 @@ Work through one phase at a time. Do not start the next phase until every accept
 
 ## 7b. Git hygiene
 
-- `.gitignore` must exclude `*.qk`, `*.bak`, `target/`, `node_modules/` and any test vault output.
+- `.gitignore` must exclude `*.quietkeys`, `*.bak`, `target/`, `node_modules/` and any test vault output.
 - Never commit a vault containing real passwords, even an encrypted one.
 - Commit after every completed phase with a clear message, so any phase can be rolled back.
 
