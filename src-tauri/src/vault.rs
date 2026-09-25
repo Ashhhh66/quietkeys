@@ -473,32 +473,9 @@ fn sync_parent_dir(_path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::crypto::MIN_PARAMS;
+    use crate::test_util::TestDir;
 
     const PASSWORD: &str = "correct horse battery staple";
-
-    /// A unique temp directory, deleted when dropped.
-    struct TestDir(PathBuf);
-
-    impl TestDir {
-        fn new() -> Self {
-            let mut id = [0u8; 8];
-            crypto::fill_random(&mut id).unwrap();
-            let dir = std::env::temp_dir()
-                .join(format!("quietkeys-test-{:016x}", u64::from_le_bytes(id)));
-            fs::create_dir_all(&dir).unwrap();
-            Self(dir)
-        }
-
-        fn vault_path(&self) -> PathBuf {
-            self.0.join(VAULT_FILE_NAME)
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     fn password() -> SecretString {
         SecretString::from(PASSWORD)

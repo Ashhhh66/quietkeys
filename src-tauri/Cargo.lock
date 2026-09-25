@@ -2863,7 +2863,9 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
+ "time",
  "unicode-normalization",
+ "uuid",
  "zeroize",
  "zxcvbn",
 ]
