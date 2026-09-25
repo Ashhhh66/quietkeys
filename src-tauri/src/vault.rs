@@ -290,9 +290,38 @@ pub fn save(vault: &mut UnlockedVault, path: &Path) -> Result<()> {
     Ok(())
 }
 
+// Covers the JSON keys and punctuation of one entry (about 100 bytes) plus some escaping.
+const JSON_OVERHEAD_PER_ENTRY: usize = 256;
+const JSON_OVERHEAD_BASE: usize = 32;
+
+fn estimated_json_len(data: &VaultData) -> usize {
+    let fields: usize = data
+        .entries
+        .iter()
+        .map(|e| {
+            e.id.len()
+                + e.title.len()
+                + e.username.len()
+                + e.password.len()
+                + e.url.len()
+                + e.notes.len()
+                + e.created_at.len()
+                + e.updated_at.len()
+        })
+        .sum();
+    JSON_OVERHEAD_BASE + fields + data.entries.len() * JSON_OVERHEAD_PER_ENTRY
+}
+
+/// Serializes into a buffer sized up front, because every time a `Vec` grows it leaves
+/// the old, unwiped allocation behind in freed memory.
+fn serialize_data(data: &VaultData) -> Result<Zeroizing<Vec<u8>>> {
+    let mut buf = Zeroizing::new(Vec::with_capacity(estimated_json_len(data)));
+    serde_json::to_writer(&mut *buf, data).map_err(|_| VaultError::InvalidFormat)?;
+    Ok(buf)
+}
+
 fn encrypt_to_file_bytes(data: &VaultData, header: &Header, key: &Key) -> Result<Vec<u8>> {
-    let plaintext =
-        Zeroizing::new(serde_json::to_vec(data).map_err(|_| VaultError::InvalidFormat)?);
+    let plaintext = serialize_data(data)?;
     let aad = aad_bytes(header)?;
     let (nonce, ciphertext) = crypto::encrypt(key, &aad, &plaintext)?;
 
@@ -900,6 +929,24 @@ mod tests {
             Err(VaultError::PasswordTooShort { min_chars: 12 })
         );
         assert!(check_new_master_password(&SecretString::from("é".repeat(12))).is_ok());
+    }
+
+    #[test]
+    fn serialized_data_fits_the_preallocated_buffer() {
+        let mut data = VaultData::default();
+        assert!(serialize_data(&data).unwrap().len() <= estimated_json_len(&data));
+
+        for n in 0..50 {
+            let mut entry = sample_entry(n);
+            entry.notes = "line one\nline \"two\"\t\\ tab".repeat(4);
+            entry.title = "Ünïcödé títle 🔑".to_string();
+            data.entries.push(entry);
+        }
+        let capacity = estimated_json_len(&data);
+        let buf = serialize_data(&data).unwrap();
+        assert!(buf.len() <= capacity, "{} > {}", buf.len(), capacity);
+        assert_eq!(buf.capacity(), capacity);
+        assert_eq!(&buf[..], &serde_json::to_vec(&data).unwrap()[..]);
     }
 
     #[test]
