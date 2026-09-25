@@ -1,5 +1,6 @@
 const COMMANDS: &[&str] = &[
     "vault_exists",
+    "is_unlocked",
     "create_vault",
     "unlock",
     "lock",

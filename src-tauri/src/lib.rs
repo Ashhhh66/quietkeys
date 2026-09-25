@@ -26,6 +26,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::vault_exists,
+            commands::is_unlocked,
             commands::create_vault,
             commands::unlock,
             commands::lock,

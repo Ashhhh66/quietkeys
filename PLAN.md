@@ -51,7 +51,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 14. **Keep a backup:** before every save, copy the current vault to `vault.quietkeys.bak`, but only if it decrypts with the current key, so a corrupted file never replaces a good backup. Losing the vault means losing every password, so this is as important as the encryption.
 15. **Frontend hygiene:** the frontend holds revealed passwords only as long as they are on screen, and clears all state on lock. Right-click menus and text selection are disabled on hidden password fields.
 16. **Locked-down webview:** a strict Content Security Policy, devtools disabled in release builds, and Tauri capabilities granting only the plugins actually used.
-17. **Unlock throttling:** after 3 failed unlock attempts, add an increasing delay in the UI. (Argon2id already makes offline guessing slow; this just discourages casual guessing.)
+17. **Unlock throttling:** enforced in Rust (`AppState`, not only in the UI). After 3 failed unlock attempts in a row, further attempts are refused for an increasing delay (1s, 2s, 4s, doubling, capped at 30s) without touching the vault file or running Argon2id. A correct password resets the count. (Argon2id already makes offline guessing slow; this just discourages casual guessing.)
 18. **Master password length:** a new master password must be at least 12 characters (Unicode characters, not bytes, counted after normalisation). This is enforced in Rust when creating a vault or changing the master password, not only in the UI.
 
 ## 4. Vault file format

@@ -2,7 +2,7 @@
 //! `AppState`, which applies the locked check and holds all the logic.
 
 use secrecy::SecretString;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::error::VaultError;
 use crate::state::{AppState, EntryInput, EntrySummary, RevealedPassword};
@@ -14,19 +14,33 @@ pub fn vault_exists(state: State<'_, AppState>) -> bool {
     state.vault_exists()
 }
 
-// `create_vault` and `unlock` run Argon2id, so they are async to keep it off the main
-// (UI) thread.
 #[tauri::command]
-pub async fn create_vault(
-    state: State<'_, AppState>,
-    master_password: String,
-) -> CommandResult<()> {
-    state.create_vault(&SecretString::from(master_password))
+pub fn is_unlocked(state: State<'_, AppState>) -> bool {
+    state.is_unlocked()
+}
+
+// `create_vault` and `unlock` run Argon2id, which is slow on purpose (that's the point of
+// a key-derivation function) and would otherwise freeze the window. `spawn_blocking` runs
+// it on a background thread; `AppHandle` (unlike `State`) can move into that thread's
+// `'static` closure, and `app.state()` fetches the same `AppState` from inside it.
+#[tauri::command]
+pub async fn create_vault(app: AppHandle, master_password: String) -> CommandResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .create_vault(&SecretString::from(master_password))
+    })
+    .await
+    .map_err(|_| VaultError::Crypto)?
 }
 
 #[tauri::command]
-pub async fn unlock(state: State<'_, AppState>, master_password: String) -> CommandResult<()> {
-    state.unlock(&SecretString::from(master_password))
+pub async fn unlock(app: AppHandle, master_password: String) -> CommandResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .unlock(&SecretString::from(master_password))
+    })
+    .await
+    .map_err(|_| VaultError::Crypto)?
 }
 
 #[tauri::command]

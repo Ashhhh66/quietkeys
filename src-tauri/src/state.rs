@@ -2,7 +2,8 @@
 
 use std::mem;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize, Serializer};
@@ -14,6 +15,30 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use crate::error::{Result, VaultError};
 use crate::vault::{self, Entry, UnlockedVault, VaultData};
 
+/// After this many wrong passwords in a row, further attempts are delayed.
+const THROTTLE_AFTER_FAILURES: u32 = 3;
+const THROTTLE_BASE_DELAY: Duration = Duration::from_secs(1);
+const THROTTLE_MAX_DELAY: Duration = Duration::from_secs(30);
+
+const MAX_TITLE_CHARS: usize = 256;
+const MAX_USERNAME_CHARS: usize = 512;
+const MAX_PASSWORD_CHARS: usize = 4096;
+const MAX_URL_CHARS: usize = 2048;
+const MAX_NOTES_CHARS: usize = 65536;
+
+/// A source of the current time, so tests can move it forward without sleeping.
+trait Clock: Send + Sync {
+    fn now(&self) -> Instant;
+}
+
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
 /// What the UI sends when adding or editing an entry. Wiped when dropped.
 #[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +48,25 @@ pub struct EntryInput {
     pub password: String,
     pub url: String,
     pub notes: String,
+}
+
+impl EntryInput {
+    /// Rejects a field that is too long, counting Unicode characters, not bytes.
+    fn check_lengths(&self) -> Result<()> {
+        let fields = [
+            ("title", &self.title, MAX_TITLE_CHARS),
+            ("username", &self.username, MAX_USERNAME_CHARS),
+            ("password", &self.password, MAX_PASSWORD_CHARS),
+            ("url", &self.url, MAX_URL_CHARS),
+            ("notes", &self.notes, MAX_NOTES_CHARS),
+        ];
+        for (field, value, max_chars) in fields {
+            if value.chars().count() > max_chars {
+                return Err(VaultError::FieldTooLong { field, max_chars });
+            }
+        }
+        Ok(())
+    }
 }
 
 /// One row of the entry list. Deliberately has no password or notes field.
@@ -60,16 +104,43 @@ impl Serialize for RevealedPassword {
     }
 }
 
+/// Tracks wrong-password attempts. A fresh vault (or one just unlocked) has no throttle.
+#[derive(Default)]
+struct ThrottleState {
+    consecutive_failures: u32,
+    locked_until: Option<Instant>,
+}
+
+/// The delay before the attempt that would follow this many consecutive failures.
+/// `None` while at or below the threshold; then 1s, 2s, 4s, ..., capped at 30s.
+fn throttle_delay(consecutive_failures: u32) -> Option<Duration> {
+    let extra = consecutive_failures.checked_sub(THROTTLE_AFTER_FAILURES)?;
+    Some(
+        THROTTLE_BASE_DELAY
+            .checked_mul(1u32.checked_shl(extra).unwrap_or(u32::MAX))
+            .unwrap_or(THROTTLE_MAX_DELAY)
+            .min(THROTTLE_MAX_DELAY),
+    )
+}
+
 pub struct AppState {
     vault_path: PathBuf,
     unlocked: Mutex<Option<UnlockedVault>>,
+    throttle: Mutex<ThrottleState>,
+    clock: Arc<dyn Clock>,
 }
 
 impl AppState {
     pub fn new(vault_path: PathBuf) -> Self {
+        Self::with_clock(vault_path, Arc::new(SystemClock))
+    }
+
+    fn with_clock(vault_path: PathBuf, clock: Arc<dyn Clock>) -> Self {
         Self {
             vault_path,
             unlocked: Mutex::new(None),
+            throttle: Mutex::new(ThrottleState::default()),
+            clock,
         }
     }
 
@@ -89,10 +160,61 @@ impl AppState {
     }
 
     /// On failure the current state (locked or unlocked) is left as it was.
+    ///
+    /// After 3 wrong passwords in a row, further attempts are refused for an increasing
+    /// delay (1s, 2s, 4s, ..., capped at 30s) without touching the vault file or running
+    /// Argon2. A correct password resets the count. Only a wrong password (not a corrupt
+    /// or unreadable file) counts as an attempt.
     pub fn unlock(&self, password: &SecretString) -> Result<()> {
-        let vault = vault::load(&self.vault_path, password)?;
-        *self.guard() = Some(vault);
-        Ok(())
+        let now = self.clock.now();
+        if let Some(seconds_remaining) = self.check_throttle(now) {
+            return Err(VaultError::Throttled { seconds_remaining });
+        }
+
+        match vault::load(&self.vault_path, password) {
+            Ok(vault) => {
+                *self.guard() = Some(vault);
+                self.reset_throttle();
+                Ok(())
+            }
+            Err(err) => {
+                if err == VaultError::DecryptFailed {
+                    self.record_wrong_password(now);
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// `Some(seconds)` if a throttle from an earlier failure is still active.
+    fn check_throttle(&self, now: Instant) -> Option<u64> {
+        let throttle = self.throttle_guard();
+        let locked_until = throttle.locked_until?;
+        (now < locked_until).then(|| seconds_remaining(now, locked_until))
+    }
+
+    fn record_wrong_password(&self, now: Instant) {
+        let mut throttle = self.throttle_guard();
+        throttle.consecutive_failures += 1;
+        throttle.locked_until = throttle_delay(throttle.consecutive_failures).map(|d| now + d);
+    }
+
+    fn reset_throttle(&self) {
+        *self.throttle_guard() = ThrottleState::default();
+    }
+
+    /// Same poison handling as `guard()`: fail safe to "no throttle recorded" rather than
+    /// risk half-updated counters, and clear the poison flag so it does not recur forever.
+    fn throttle_guard(&self) -> MutexGuard<'_, ThrottleState> {
+        match self.throttle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                *guard = ThrottleState::default();
+                self.throttle.clear_poison();
+                guard
+            }
+        }
     }
 
     /// Drops the unlocked vault, which wipes its key and entries. Does nothing if already
@@ -114,6 +236,7 @@ impl AppState {
 
     pub fn add_entry(&self, mut input: EntryInput) -> Result<EntrySummary> {
         self.modify(|data| {
+            input.check_lengths()?;
             let now = now_rfc3339()?;
             let entry = Entry {
                 id: Uuid::new_v4().to_string(),
@@ -133,6 +256,7 @@ impl AppState {
 
     pub fn update_entry(&self, id: &str, mut input: EntryInput) -> Result<EntrySummary> {
         self.modify(|data| {
+            input.check_lengths()?;
             let now = now_rfc3339()?;
             let entry = find_mut(data, id)?;
             replace_wiping(&mut entry.title, mem::take(&mut input.title));
@@ -184,9 +308,28 @@ impl AppState {
         })
     }
 
+    /// If a previous access panicked while holding this lock, the in-memory vault may be
+    /// half-changed (for example, a field replaced but not yet saved). Rather than risk
+    /// using that data, treat a poisoned lock as a lock: clear the vault, then clear the
+    /// poison flag so later calls behave normally again (a `Mutex` stays poisoned forever
+    /// otherwise, which would wipe every future unlock too).
     fn guard(&self) -> MutexGuard<'_, Option<UnlockedVault>> {
-        self.unlocked.lock().unwrap_or_else(PoisonError::into_inner)
+        match self.unlocked.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                *guard = None;
+                self.unlocked.clear_poison();
+                guard
+            }
+        }
     }
+}
+
+/// Rounds up, so the UI never shows "0 seconds" while a throttle is still active.
+fn seconds_remaining(now: Instant, locked_until: Instant) -> u64 {
+    let remaining = locked_until.saturating_duration_since(now);
+    remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
 }
 
 fn find<'a>(data: &'a VaultData, id: &str) -> Result<&'a Entry> {
@@ -500,5 +643,293 @@ mod tests {
         let json =
             r#"{"title":"t","username":"u","password":"p","url":"x","notes":"n","id":"forged"}"#;
         assert!(serde_json::from_str::<EntryInput>(json).is_err());
+    }
+
+    // --- Field length limits ---
+
+    fn input_with(field: &str, value: String) -> EntryInput {
+        let mut entry = input(1);
+        match field {
+            "title" => entry.title = value,
+            "username" => entry.username = value,
+            "password" => entry.password = value,
+            "url" => entry.url = value,
+            "notes" => entry.notes = value,
+            _ => unreachable!(),
+        }
+        entry
+    }
+
+    #[test]
+    fn each_field_over_its_limit_is_rejected() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let limits: [(&str, usize); 5] = [
+            ("title", MAX_TITLE_CHARS),
+            ("username", MAX_USERNAME_CHARS),
+            ("password", MAX_PASSWORD_CHARS),
+            ("url", MAX_URL_CHARS),
+            ("notes", MAX_NOTES_CHARS),
+        ];
+        for (field, max_chars) in limits {
+            let too_long = "a".repeat(max_chars + 1);
+            assert_eq!(
+                state.add_entry(input_with(field, too_long)).err(),
+                Some(VaultError::FieldTooLong { field, max_chars }),
+                "{field}"
+            );
+        }
+        // Nothing above was actually saved.
+        assert_eq!(state.list_entries().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn each_field_at_its_limit_is_accepted() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        for (field, max_chars) in [
+            ("title", MAX_TITLE_CHARS),
+            ("username", MAX_USERNAME_CHARS),
+            ("password", MAX_PASSWORD_CHARS),
+            ("url", MAX_URL_CHARS),
+            ("notes", MAX_NOTES_CHARS),
+        ] {
+            let exactly_max = "a".repeat(max_chars);
+            assert!(
+                state.add_entry(input_with(field, exactly_max)).is_ok(),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn field_length_counts_characters_not_bytes() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        // Each 'é' is 2 bytes in UTF-8 but 1 character.
+        let at_limit = "é".repeat(MAX_TITLE_CHARS);
+        let over_limit = "é".repeat(MAX_TITLE_CHARS + 1);
+        assert!(state.add_entry(input_with("title", at_limit)).is_ok());
+        assert_eq!(
+            state.add_entry(input_with("title", over_limit)).err(),
+            Some(VaultError::FieldTooLong {
+                field: "title",
+                max_chars: MAX_TITLE_CHARS
+            })
+        );
+    }
+
+    #[test]
+    fn locked_state_takes_priority_over_field_length() {
+        let dir = TestDir::new();
+        let state = AppState::new(dir.vault_path());
+        let too_long = input_with("title", "a".repeat(MAX_TITLE_CHARS + 1));
+        assert_eq!(state.add_entry(too_long).err(), Some(VaultError::Locked));
+    }
+
+    #[test]
+    fn update_entry_also_checks_field_lengths() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let added = state.add_entry(input(1)).unwrap();
+        let too_long = input_with("notes", "a".repeat(MAX_NOTES_CHARS + 1));
+        assert_eq!(
+            state.update_entry(&added.id, too_long).err(),
+            Some(VaultError::FieldTooLong {
+                field: "notes",
+                max_chars: MAX_NOTES_CHARS
+            })
+        );
+        // The existing entry is unchanged.
+        let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
+        assert_eq!(on_disk.data.entries[0].notes, "notes 1");
+    }
+
+    // --- Unlock throttling ---
+
+    struct FakeClock {
+        base: Instant,
+        offset_ms: std::sync::atomic::AtomicU64,
+    }
+
+    impl FakeClock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                base: Instant::now(),
+                offset_ms: std::sync::atomic::AtomicU64::new(0),
+            })
+        }
+
+        fn advance(&self, duration: Duration) {
+            self.offset_ms.fetch_add(
+                u64::try_from(duration.as_millis()).unwrap(),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+    }
+
+    impl Clock for FakeClock {
+        fn now(&self) -> Instant {
+            self.base
+                + Duration::from_millis(self.offset_ms.load(std::sync::atomic::Ordering::SeqCst))
+        }
+    }
+
+    fn unlocked_state_with_clock(dir: &TestDir, clock: Arc<FakeClock>) -> AppState {
+        let state = AppState::with_clock(dir.vault_path(), clock);
+        state.create_vault(&password()).unwrap();
+        state
+    }
+
+    fn wrong_password() -> SecretString {
+        SecretString::from("not the right password")
+    }
+
+    #[test]
+    fn throttle_delay_doubles_and_caps_at_thirty_seconds() {
+        assert_eq!(throttle_delay(0), None);
+        assert_eq!(throttle_delay(2), None);
+        assert_eq!(throttle_delay(3), Some(Duration::from_secs(1)));
+        assert_eq!(throttle_delay(4), Some(Duration::from_secs(2)));
+        assert_eq!(throttle_delay(5), Some(Duration::from_secs(4)));
+        assert_eq!(throttle_delay(6), Some(Duration::from_secs(8)));
+        assert_eq!(throttle_delay(7), Some(Duration::from_secs(16)));
+        assert_eq!(throttle_delay(8), Some(Duration::from_secs(30)));
+        assert_eq!(throttle_delay(9), Some(Duration::from_secs(30)));
+        assert_eq!(throttle_delay(1000), Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn unlock_is_throttled_after_three_wrong_passwords() {
+        let dir = TestDir::new();
+        let clock = FakeClock::new();
+        let state = unlocked_state_with_clock(&dir, clock.clone());
+        state.lock();
+
+        for _ in 0..3 {
+            assert_eq!(
+                state.unlock(&wrong_password()),
+                Err(VaultError::DecryptFailed)
+            );
+        }
+
+        // The very next attempt is refused before it even tries the password, even if
+        // the password is correct this time.
+        assert_eq!(
+            state.unlock(&password()),
+            Err(VaultError::Throttled {
+                seconds_remaining: 1
+            })
+        );
+        assert!(!state.is_unlocked());
+
+        // Waiting out the delay allows a real attempt again.
+        clock.advance(Duration::from_secs(1));
+        state.unlock(&password()).unwrap();
+        assert!(state.is_unlocked());
+    }
+
+    #[test]
+    fn throttled_attempts_do_not_run_argon2_or_extend_the_delay() {
+        let dir = TestDir::new();
+        let clock = FakeClock::new();
+        let state = unlocked_state_with_clock(&dir, clock.clone());
+        state.lock();
+
+        for _ in 0..3 {
+            state.unlock(&wrong_password()).unwrap_err();
+        }
+        // Several throttled attempts while the delay is active.
+        for _ in 0..5 {
+            assert_eq!(
+                state.unlock(&wrong_password()),
+                Err(VaultError::Throttled {
+                    seconds_remaining: 1
+                })
+            );
+        }
+
+        clock.advance(Duration::from_secs(1));
+        // A 4th real failure: if the throttled attempts above had counted, the delay
+        // here would be based on 9 failures (30s), not 4 (2s).
+        assert_eq!(
+            state.unlock(&wrong_password()),
+            Err(VaultError::DecryptFailed)
+        );
+        assert_eq!(
+            state.unlock(&wrong_password()),
+            Err(VaultError::Throttled {
+                seconds_remaining: 2
+            })
+        );
+    }
+
+    #[test]
+    fn successful_unlock_resets_the_throttle() {
+        let dir = TestDir::new();
+        let clock = FakeClock::new();
+        let state = unlocked_state_with_clock(&dir, clock.clone());
+        state.lock();
+
+        for _ in 0..3 {
+            state.unlock(&wrong_password()).unwrap_err();
+        }
+        clock.advance(Duration::from_secs(1));
+        state.unlock(&password()).unwrap();
+        state.lock();
+
+        // A fresh cycle: exactly 3 wrong passwords give a 1s delay again, not more,
+        // proving the earlier failures were forgotten.
+        for _ in 0..3 {
+            state.unlock(&wrong_password()).unwrap_err();
+        }
+        assert_eq!(
+            state.unlock(&password()),
+            Err(VaultError::Throttled {
+                seconds_remaining: 1
+            })
+        );
+    }
+
+    #[test]
+    fn unlock_failures_other_than_wrong_password_do_not_throttle() {
+        let dir = TestDir::new();
+        let clock = FakeClock::new();
+        let state = unlocked_state_with_clock(&dir, clock.clone());
+        state.lock();
+        fs::write(dir.vault_path(), b"not a vault at all").unwrap();
+
+        for _ in 0..5 {
+            assert_eq!(state.unlock(&password()), Err(VaultError::InvalidFormat));
+        }
+        assert!(!matches!(
+            state.unlock(&password()),
+            Err(VaultError::Throttled { .. })
+        ));
+    }
+
+    // --- Poisoned lock ---
+
+    #[test]
+    fn poisoned_lock_clears_the_vault_instead_of_reusing_it() {
+        let dir = TestDir::new();
+        let state = Arc::new(unlocked_state(&dir));
+        state.add_entry(input(1)).unwrap();
+        assert!(state.is_unlocked());
+
+        let poisoned = Arc::clone(&state);
+        let handle = std::thread::spawn(move || {
+            let _guard = poisoned.unlocked.lock().unwrap();
+            panic!("simulated panic while holding the vault lock");
+        });
+        assert!(handle.join().is_err());
+
+        assert!(!state.is_unlocked());
+        assert_eq!(state.list_entries().err(), Some(VaultError::Locked));
+        assert_eq!(state.get_password("any-id").err(), Some(VaultError::Locked));
+
+        // The state still works normally afterwards.
+        state.unlock(&password()).unwrap();
+        assert_eq!(state.list_entries().unwrap().len(), 1);
     }
 }

@@ -23,6 +23,15 @@ pub enum VaultError {
     /// The operation needs an unlocked vault.
     Locked,
     EntryNotFound,
+    /// A field on an entry is longer than allowed.
+    FieldTooLong {
+        field: &'static str,
+        max_chars: usize,
+    },
+    /// Too many wrong passwords in a row; try again after this many seconds.
+    Throttled {
+        seconds_remaining: u64,
+    },
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -40,6 +49,8 @@ impl VaultError {
             VaultError::PasswordHasControlCharacter => "password_has_control_character",
             VaultError::Locked => "locked",
             VaultError::EntryNotFound => "entry_not_found",
+            VaultError::FieldTooLong { .. } => "field_too_long",
+            VaultError::Throttled { .. } => "throttled",
             VaultError::Crypto => "crypto",
             VaultError::Io(_) => "io",
         }
@@ -68,6 +79,13 @@ impl fmt::Display for VaultError {
             ),
             VaultError::Locked => write!(f, "The vault is locked"),
             VaultError::EntryNotFound => write!(f, "That entry no longer exists"),
+            VaultError::FieldTooLong { field, max_chars } => {
+                write!(f, "{field} must be at most {max_chars} characters long")
+            }
+            VaultError::Throttled { seconds_remaining } => write!(
+                f,
+                "Too many incorrect attempts. Try again in {seconds_remaining} seconds"
+            ),
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),
         }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-unlocked"
+description = "Enables the is_unlocked command without any pre-configured scope."
+commands.allow = ["is_unlocked"]
+
+[[permission]]
+identifier = "deny-is-unlocked"
+description = "Denies the is_unlocked command without any pre-configured scope."
+commands.deny = ["is_unlocked"]

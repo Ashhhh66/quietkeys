@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-vault-exists",
+    "allow-is-unlocked",
     "allow-create-vault",
     "allow-unlock",
     "allow-lock",
