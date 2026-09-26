@@ -94,4 +94,17 @@ describe("Setup", () => {
     expect(passwordInput).toHaveValue("");
     expect(confirmInput).toHaveValue("");
   });
+
+  it("offers restore only when a backup exists", async () => {
+    const backup = vi.spyOn(api, "backupExists").mockResolvedValue(false);
+    const { unmount } = render(<Setup onCreated={vi.fn()} />);
+    await waitFor(() => expect(backup).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Restore from backup" })).not.toBeInTheDocument();
+    unmount();
+
+    backup.mockResolvedValue(true);
+    render(<Setup onCreated={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Restore from backup" })).toBeInTheDocument();
+    backup.mockRestore();
+  });
 });

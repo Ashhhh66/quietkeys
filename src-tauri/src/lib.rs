@@ -20,6 +20,7 @@ use crate::state::AppState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_local_data_dir()?;
             create_private_dir(&dir)?;
@@ -28,6 +29,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::vault_exists,
+            commands::backup_exists,
             commands::is_unlocked,
             commands::create_vault,
             commands::unlock,
@@ -50,9 +52,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                // Tauri 2's RunEvent has no system-sleep variant on Windows or macOS, so
-                // there is no lock-on-sleep hook. Idle auto-lock needs activity signals
-                // from the UI and is not done here.
+                // Tauri 2's RunEvent has no system-sleep variant on Windows or macOS.
+                // Idle auto-lock lives in the UI and compares the last activity time,
+                // so a wake from sleep still locks once that time is in the past.
                 app.state::<AppState>().lock();
             }
         });

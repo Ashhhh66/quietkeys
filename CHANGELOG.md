@@ -14,3 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core UI: create a vault, unlock, search, and add, edit, delete, and reveal logins.
 - Light and dark themes.
 - Rust side of Phase 4: password generator and strength score, concealed clipboard, change master password, restore from backup, and encrypted export.
+
+### Changed
+
+- Generator and Settings are usable, and the username and password copy buttons copy to the clipboard (cleared after 30 seconds).

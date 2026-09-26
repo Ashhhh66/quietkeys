@@ -1,8 +1,6 @@
 //! The Tauri commands: the only bridge between the UI and the vault. Each one delegates to
 //! `AppState`, which applies the locked check and holds all the logic.
 
-use std::path::Path;
-
 use secrecy::SecretString;
 use tauri::{AppHandle, Manager, State};
 
@@ -17,6 +15,11 @@ type CommandResult<T> = Result<T, VaultError>;
 #[tauri::command]
 pub fn vault_exists(state: State<'_, AppState>) -> bool {
     state.vault_exists()
+}
+
+#[tauri::command]
+pub fn backup_exists(state: State<'_, AppState>) -> bool {
+    state.backup_exists()
 }
 
 #[tauri::command]
@@ -134,7 +137,39 @@ pub async fn restore_from_backup(app: AppHandle, master_password: String) -> Com
     .map_err(|_| VaultError::Crypto)?
 }
 
+/// Opens the native save dialog in Rust. Cancel returns without writing. The UI never
+/// chooses the path.
 #[tauri::command]
-pub fn export_vault(state: State<'_, AppState>, path: String) -> CommandResult<()> {
-    state.export_vault(Path::new(&path))
+pub async fn export_vault(app: AppHandle) -> CommandResult<()> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Export vault")
+        .set_file_name(suggested_export_name())
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let picked = tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|_| VaultError::Crypto)?
+        .map_err(|_| VaultError::Crypto)?;
+    let Some(file) = picked else {
+        return Ok(());
+    };
+    let path = file
+        .into_path()
+        .map_err(|_| VaultError::Io(std::io::ErrorKind::InvalidInput))?;
+    app.state::<AppState>().export_vault(&path)
+}
+
+fn suggested_export_name() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "quietkeys-backup-{:04}-{:02}-{:02}.quietkeys",
+        now.year(),
+        u8::from(now.month()),
+        now.day()
+    )
 }

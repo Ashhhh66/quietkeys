@@ -15,6 +15,9 @@ export type ApiErrorKind =
   | "field_too_long"
   | "throttled"
   | "busy"
+  | "already_unlocked"
+  | "unsupported"
+  | "invalid_generator_options"
   | "crypto"
   | "io";
 
@@ -27,6 +30,45 @@ export interface ApiError {
 
 export function isApiError(value: unknown): value is ApiError {
   return typeof value === "object" && value !== null && "kind" in value && "message" in value;
+}
+
+/** Short copy for kinds that have no screen-specific wording in DESIGN.md. */
+export function friendlyMessage(err: unknown): string {
+  if (!isApiError(err)) return "Something went wrong. Try again.";
+  switch (err.kind) {
+    case "busy":
+      return "Another vault operation is already in progress. Try again in a moment.";
+    case "already_unlocked":
+      return "The vault is already unlocked.";
+    case "unsupported":
+      return "Copying isn't available on this system.";
+    case "throttled": {
+      const seconds = err.secondsRemaining ?? 0;
+      return `Too many attempts. You can try again in ${seconds} ${seconds === 1 ? "second" : "seconds"}.`;
+    }
+    case "io":
+      if (err.message.toLowerCase().includes("already exists")) {
+        return "A file with that name already exists. Choose a different name.";
+      }
+      return err.message;
+    default:
+      return err.message;
+  }
+}
+
+export interface PasswordOptions {
+  length: number;
+  uppercase: boolean;
+  lowercase: boolean;
+  digits: boolean;
+  symbols: boolean;
+  excludeAmbiguous: boolean;
+}
+
+export interface PasswordScore {
+  score: number;
+  warning: string | null;
+  suggestions: string[];
 }
 
 export interface EntrySummary {
@@ -111,3 +153,24 @@ export const updateEntry = (id: string, entry: UpdateEntryInput): Promise<EntryS
   call("update_entry", { id, entry });
 
 export const deleteEntry = (id: string): Promise<void> => call("delete_entry", { id });
+
+export const backupExists = (): Promise<boolean> => call("backup_exists");
+
+export const generatePassword = (options: PasswordOptions): Promise<string> =>
+  call("generate_password", { options });
+
+export const scorePassword = (password: string): Promise<PasswordScore> =>
+  call("score_password", { password });
+
+export const changeMasterPassword = (current: string, newPassword: string): Promise<void> =>
+  call("change_master_password", { current, new: newPassword });
+
+export const copyPassword = (id: string): Promise<void> => call("copy_password", { id });
+
+export const copyUsername = (id: string): Promise<void> => call("copy_username", { id });
+
+export const restoreFromBackup = (masterPassword: string): Promise<void> =>
+  call("restore_from_backup", { masterPassword });
+
+/** The save dialog runs in Rust. Cancel is a success and writes nothing. */
+export const exportVault = (): Promise<void> => call("export_vault");

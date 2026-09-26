@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, Clock, LoaderCircle, Lock, ShieldCheck } from "lucide-react";
 import { isApiError, unlock } from "../api";
 import AuthCard, { ALERT, FIELD_INPUT, FIELD_LABEL, PRIMARY_BUTTON } from "../components/AuthCard";
+import RestoreBackup from "./RestoreBackup";
 
 interface Props {
   onUnlocked: () => void;
@@ -118,6 +119,9 @@ export default function Unlock({ onUnlocked }: Props) {
         <ShieldCheck size={13} strokeWidth={2} aria-hidden />
         Your vault never leaves this computer.
       </p>
+      <div className="flex justify-center">
+        <RestoreBackup onRestored={onUnlocked} />
+      </div>
     </AuthCard>
   );
 }

@@ -1374,6 +1374,23 @@ mod tests {
     }
 
     #[test]
+    fn restore_works_when_the_current_vault_file_is_missing() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut vault = new_vault(&dir);
+        vault.data.entries.push(sample_entry(1));
+        save(&mut vault, &path).unwrap();
+        vault.data.entries.push(sample_entry(2));
+        save(&mut vault, &path).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        let restored = restore_replacing(&path, &password()).unwrap();
+        assert_eq!(restored.data.entries.len(), 1);
+        assert!(path.exists());
+        assert!(!pre_restore_path(&path).exists());
+    }
+
+    #[test]
     fn a_wrong_restore_password_does_not_move_the_vault() {
         let dir = TestDir::new();
         let path = dir.vault_path();

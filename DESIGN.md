@@ -68,7 +68,7 @@ All text must meet 4.5:1 contrast in both themes.
 - **Nav items** (40px tall, radius 9px, padding 0 12px, 14px/500, 10px gap between icon and label):
   - "All items" (`List` icon), active: `nav-active-bg`, `text` colour, count on the right at 12px `muted`.
   - "Logins" (`KeyRound`), with count.
-  - "Generator" (`Sparkles`) and "Settings" (`Settings`): visible but **disabled until Phase 4**.
+  - "Generator" (`Sparkles`) and "Settings" (`Settings`): open the generator and settings screens.
   - Inactive items: transparent bg, `nav-text`.
 - Spacer, then the **Light theme** row, then the **Lock vault** button: 44px tall, radius 10px, `lock-bg`, 1px `lock-border`, `Lock` icon, label left-aligned, and a keyboard hint pill "Ctrl L" (⌘L on macOS) at 11px `muted`, 1px `kbd-border`, radius 5px, padding 2px 6px.
 
@@ -92,7 +92,7 @@ All text must meet 4.5:1 contrast in both themes.
   - **Username** row, with a copy icon button on the right.
   - **Password** row: masked as 12 bullets (`••••••••••••`, letter-spacing 0.18em) in JetBrains Mono 15px; revealed text uses letter-spacing 0.02em. Eye / EyeOff toggle (40×40 icon button, `aria-label` "Show password"/"Hide password") and a copy button. While revealed, a pill next to the label: `Clock` icon + "Hides in 30s", 12px, `badge-*` tokens, radius 999px, padding 2px 8px.
   - **Website** row, value in `accent-text`.
-  - Copy buttons are wired up in Phase 4. Until then, render them disabled.
+  - Copy buttons copy the username or password and show “Copied, clears in 30s”. If copying is unsupported, both buttons are removed.
 - **Notes card** (same card style, padding 16px 20px, gap 8px): "Notes" label, text 14.5px, line-height 1.55, `text-soft`, `white-space: pre-wrap`. Empty notes show "No notes." in `muted`.
 - **Meta line:** "Created 12 Sep 2026 · Edited 25 Sep 2026" at 12.5px `label`. Format dates as day, short month, year in the user's locale.
 - **Add/Edit** opens in this same right panel, using the same card style for its form fields.

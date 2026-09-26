@@ -6,10 +6,11 @@ import * as api from "../api";
 
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof api>("../api");
-  return { ...actual, unlock: vi.fn() };
+  return { ...actual, unlock: vi.fn(), restoreFromBackup: vi.fn() };
 });
 
 const unlockMock = api.unlock as unknown as ReturnType<typeof vi.fn>;
+const restoreMock = api.restoreFromBackup as unknown as ReturnType<typeof vi.fn>;
 
 function passwordField(): HTMLInputElement {
   return document.querySelector("input[type='password']") as HTMLInputElement;
@@ -17,6 +18,7 @@ function passwordField(): HTMLInputElement {
 
 beforeEach(() => {
   unlockMock.mockReset();
+  restoreMock.mockReset();
 });
 
 describe("Unlock", () => {
@@ -68,7 +70,7 @@ describe("Unlock", () => {
       await user.type(input, "wrong password");
       await user.click(screen.getByRole("button", { name: "Unlock" }));
 
-      const button = () => screen.getByRole("button");
+      const button = () => screen.getByRole("button", { name: /Try again in|Unlock/ });
       await waitFor(() => expect(button()).toHaveTextContent("Try again in 5s"));
       expect(button()).toBeDisabled();
       expect(screen.getByRole("status")).toHaveTextContent(
@@ -89,5 +91,38 @@ describe("Unlock", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("confirms that the current vault will be moved, then restores", async () => {
+    restoreMock.mockResolvedValue(undefined);
+    const onUnlocked = vi.fn();
+    const user = userEvent.setup();
+    render(<Unlock onUnlocked={onUnlocked} />);
+
+    await user.click(screen.getByRole("button", { name: "Restore from backup" }));
+    expect(screen.getByText(/vault\.quietkeys\.pre-restore/)).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Backup password"), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+
+    await waitFor(() => expect(onUnlocked).toHaveBeenCalledTimes(1));
+    expect(restoreMock).toHaveBeenCalledWith("correct horse battery staple");
+  });
+
+  it("reuses the unlock alert when the backup password is wrong", async () => {
+    restoreMock.mockRejectedValue({
+      kind: "decrypt_failed",
+      message: "Incorrect password or corrupted vault",
+    });
+    const user = userEvent.setup();
+    render(<Unlock onUnlocked={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Restore from backup" }));
+    await user.type(screen.getByLabelText("Backup password"), "wrong password");
+    await user.click(screen.getByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Incorrect password or corrupted vault.",
+    );
   });
 });

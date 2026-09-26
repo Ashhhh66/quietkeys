@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-vault-exists",
+    "allow-backup-exists",
     "allow-is-unlocked",
     "allow-create-vault",
     "allow-unlock",
@@ -22,6 +23,8 @@
     "allow-copy-password",
     "allow-copy-username",
     "allow-restore-from-backup",
-    "allow-export-vault"
+    "allow-export-vault",
+    "dialog:allow-save",
+    "core:app:default"
   ]
 }

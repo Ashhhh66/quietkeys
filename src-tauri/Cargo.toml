@@ -33,6 +33,7 @@ zeroize = { version = "1.9.0", features = ["derive"] }
 unicode-normalization = "0.1.25"
 uuid = { version = "1.26.1", features = ["v4"] }
 time = { version = "0.3.55", features = ["formatting", "parsing"] }
+tauri-plugin-dialog = "2.7.3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [

@@ -1,8 +1,11 @@
-import { useState, type FormEvent } from "react";
-import { AlertCircle, Check, KeyRound, LoaderCircle, TriangleAlert, X } from "lucide-react";
-import { createVault, isApiError } from "../api";
+import { useEffect, useState, type FormEvent } from "react";
+import { AlertCircle, KeyRound, LoaderCircle, TriangleAlert } from "lucide-react";
+import { backupExists, createVault, isApiError } from "../api";
 import AuthCard, { ALERT, FIELD_INPUT, FIELD_LABEL, PRIMARY_BUTTON } from "../components/AuthCard";
-import { checkNewMasterPassword, masterPasswordRules } from "../masterPassword";
+import PasswordChecklist from "../components/PasswordChecklist";
+import StrengthMeter from "../components/StrengthMeter";
+import { checkNewMasterPassword } from "../masterPassword";
+import RestoreBackup from "./RestoreBackup";
 
 interface Props {
   onCreated: () => void;
@@ -13,9 +16,23 @@ export default function Setup({ onCreated }: Props) {
   const [confirm, setConfirm] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showRestore, setShowRestore] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    backupExists()
+      .then((exists) => {
+        if (!cancelled) setShowRestore(exists);
+      })
+      .catch(() => {
+        if (!cancelled) setShowRestore(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const check = checkNewMasterPassword(password);
-  const rules = masterPasswordRules(password);
   const passwordsMatch = confirm.length > 0 && password === confirm;
   const canSubmit = check.ok && passwordsMatch && !submitting;
 
@@ -65,6 +82,7 @@ export default function Setup({ onCreated }: Props) {
             onContextMenu={(e) => e.preventDefault()}
             className={FIELD_INPUT}
           />
+          <StrengthMeter password={password} />
         </div>
         <div className="flex flex-col gap-2">
           <label className={FIELD_LABEL} htmlFor="confirm-password">
@@ -80,13 +98,7 @@ export default function Setup({ onCreated }: Props) {
             className={FIELD_INPUT}
           />
         </div>
-        <ul aria-label="Password requirements" className="flex flex-col gap-2 text-[13.5px]">
-          <ChecklistItem met={rules.longEnough}>At least 12 characters</ChecklistItem>
-          <ChecklistItem met={password.length > 0 && rules.noControlCharacters}>
-            No hidden control characters
-          </ChecklistItem>
-          <ChecklistItem met={passwordsMatch}>Passwords match</ChecklistItem>
-        </ul>
+        <PasswordChecklist password={password} confirm={confirm} />
         <p className={`${ALERT} border-warn-border bg-warn-bg text-[13px] text-warn-fg`}>
           <TriangleAlert size={16} strokeWidth={2} aria-hidden className="mt-px shrink-0" />
           There is no password reset. If you forget your master password, your vault can&apos;t be
@@ -105,23 +117,11 @@ export default function Setup({ onCreated }: Props) {
           {submitting ? "Creating…" : "Create vault"}
         </button>
       </form>
+      {showRestore && (
+        <div className="flex justify-center">
+          <RestoreBackup onRestored={onCreated} />
+        </div>
+      )}
     </AuthCard>
-  );
-}
-
-function ChecklistItem({ met, children }: { met: boolean; children: string }) {
-  return (
-    <li className={`flex items-center gap-2.5 ${met ? "text-text-soft" : "text-muted"}`}>
-      <span
-        aria-hidden
-        className={`flex size-5 shrink-0 items-center justify-center rounded-full ${
-          met ? "bg-ok-bg text-ok-fg" : "bg-disabled-bg text-muted"
-        }`}
-      >
-        {met ? <Check size={14} strokeWidth={2} /> : <X size={14} strokeWidth={2} />}
-      </span>
-      <span className="sr-only">{met ? "Met:" : "Not met:"}</span>
-      <span>{children}</span>
-    </li>
   );
 }

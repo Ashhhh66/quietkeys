@@ -16,7 +16,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  copyPassword,
+  copyUsername,
   deleteEntry,
+  friendlyMessage,
   getEntry,
   getPassword,
   isApiError,
@@ -29,7 +32,9 @@ import { domainOf } from "../avatar";
 import Avatar from "../components/Avatar";
 import Kbd, { shortcutKeys, shortcutLabel } from "../components/Kbd";
 import ThemeSwitch from "../components/ThemeSwitch";
-import EntryEditor from "./EntryEditor";
+import EntryEditor, { type AppliedPassword } from "./EntryEditor";
+import Generator from "./Generator";
+import SettingsScreen from "./Settings";
 
 interface Props {
   onLocked: () => void;
@@ -42,9 +47,11 @@ export default function VaultList({ onLocked }: Props) {
   const [entries, setEntries] = useState<EntrySummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
-  const [nav, setNav] = useState<"all" | "logins">("all");
+  const [nav, setNav] = useState<"all" | "logins" | "generator" | "settings">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<"new" | string | null>(null);
+  const [generatorOverEditor, setGeneratorOverEditor] = useState(false);
+  const [appliedPassword, setAppliedPassword] = useState<AppliedPassword | null>(null);
   // Bumped after every save so the details panel re-fetches notes and dates.
   const [detailsVersion, setDetailsVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -116,6 +123,14 @@ export default function VaultList({ onLocked }: Props) {
   function selectEntry(id: string) {
     setSelectedId(id);
     setEditing(null);
+    setGeneratorOverEditor(false);
+    setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
+  }
+
+  function startNewEntry() {
+    setEditing("new");
+    setGeneratorOverEditor(false);
+    setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
   }
 
   const query = search.toLowerCase();
@@ -132,22 +147,42 @@ export default function VaultList({ onLocked }: Props) {
     (editing === null ? (filtered[0] ?? null) : null);
   const highlightedId = editing === "new" ? null : (editing ?? selected?.id ?? null);
 
-  let details: ReactNode;
-  if (editing !== null) {
+  let details: ReactNode = null;
+  if (nav === "settings") {
+    details = <SettingsScreen />;
+  } else if (editing !== null) {
     details = (
-      <EntryEditor
-        key={editing}
-        id={editing === "new" ? null : editing}
-        onDone={(saved) => {
-          setEditing(null);
-          if (saved) {
-            setSelectedId(saved.id);
-            setDetailsVersion((v) => v + 1);
-          }
-          refresh();
-        }}
-      />
+      <div className="relative h-full">
+        <EntryEditor
+          key={editing}
+          id={editing === "new" ? null : editing}
+          appliedPassword={appliedPassword}
+          onOpenGenerator={() => setGeneratorOverEditor(true)}
+          onDone={(saved) => {
+            setEditing(null);
+            setGeneratorOverEditor(false);
+            if (saved) {
+              setSelectedId(saved.id);
+              setDetailsVersion((v) => v + 1);
+            }
+            refresh();
+          }}
+        />
+        {generatorOverEditor && (
+          <div className="absolute inset-0 z-10 overflow-y-auto bg-page">
+            <Generator
+              onUse={(text) => {
+                setAppliedPassword({ text, nonce: Date.now() });
+                setGeneratorOverEditor(false);
+              }}
+              onClose={() => setGeneratorOverEditor(false)}
+            />
+          </div>
+        )}
+      </div>
     );
+  } else if (nav === "generator") {
+    details = <Generator />;
   } else if (selected) {
     details = (
       <EntryPanel
@@ -174,17 +209,43 @@ export default function VaultList({ onLocked }: Props) {
             label="All items"
             count={entries.length}
             active={nav === "all"}
-            onClick={() => setNav("all")}
+            onClick={() => {
+              setNav("all");
+              setGeneratorOverEditor(false);
+            }}
           />
           <NavItem
             icon={KeyRound}
             label="Logins"
             count={entries.length}
             active={nav === "logins"}
-            onClick={() => setNav("logins")}
+            onClick={() => {
+              setNav("logins");
+              setGeneratorOverEditor(false);
+            }}
           />
-          <NavItem icon={Sparkles} label="Generator" disabled />
-          <NavItem icon={Settings} label="Settings" disabled />
+          <NavItem
+            icon={Sparkles}
+            label="Generator"
+            active={nav === "generator" || generatorOverEditor}
+            onClick={() => {
+              if (editing !== null) {
+                setGeneratorOverEditor(true);
+                return;
+              }
+              setNav("generator");
+            }}
+          />
+          <NavItem
+            icon={Settings}
+            label="Settings"
+            active={nav === "settings"}
+            onClick={() => {
+              setNav("settings");
+              setEditing(null);
+              setGeneratorOverEditor(false);
+            }}
+          />
         </nav>
         <div className="flex-1" />
         <ThemeSwitch />
@@ -234,7 +295,7 @@ export default function VaultList({ onLocked }: Props) {
           <button
             type="button"
             aria-label="Add login"
-            onClick={() => setEditing("new")}
+            onClick={startNewEntry}
             className="flex size-11 shrink-0 items-center justify-center rounded-[10px] bg-accent text-on-accent hover:bg-accent-hover"
           >
             <Plus size={18} strokeWidth={2} aria-hidden />
@@ -258,7 +319,7 @@ export default function VaultList({ onLocked }: Props) {
             <p className="text-[15px] font-medium text-text-soft">No passwords yet</p>
             <button
               type="button"
-              onClick={() => setEditing("new")}
+              onClick={startNewEntry}
               className="flex h-10 items-center gap-2 rounded-[10px] bg-accent px-4 text-[14px] font-semibold text-on-accent hover:bg-accent-hover"
             >
               <Plus size={16} strokeWidth={2} aria-hidden />
@@ -370,6 +431,25 @@ function EntryPanel({
   const [details, setDetails] = useState<EntryDetails | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
+  const [copiesSupported, setCopiesSupported] = useState(true);
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+
+  async function copy(which: "username" | "password") {
+    setCopyError(null);
+    try {
+      if (which === "username") await copyUsername(entry.id);
+      else await copyPassword(entry.id);
+      setCopied(true);
+    } catch (err) {
+      if (isApiError(err) && err.kind === "unsupported") {
+        setCopiesSupported(false);
+        setCopied(false);
+        return;
+      }
+      setCopyError(friendlyMessage(err));
+    }
+  }
 
   // Notes and dates only; the password is never part of this payload.
   useEffect(() => {
@@ -436,7 +516,16 @@ function EntryPanel({
       </header>
 
       <div className="divide-y divide-card-border rounded-[14px] border border-card-border bg-card">
-        <FieldRow label="Username" actions={<CopyButton label="Copy username" />}>
+        <FieldRow
+          label="Username"
+          actions={
+            copiesSupported ? (
+              <IconButton label="Copy username" onClick={() => void copy("username")}>
+                <Copy size={17} strokeWidth={2} aria-hidden />
+              </IconButton>
+            ) : undefined
+          }
+        >
           {entry.username || <span className="text-muted">—</span>}
         </FieldRow>
         <FieldRow
@@ -461,7 +550,11 @@ function EntryPanel({
                   <Eye size={17} strokeWidth={2} aria-hidden />
                 )}
               </IconButton>
-              <CopyButton label="Copy password" />
+              {copiesSupported && (
+                <IconButton label="Copy password" onClick={() => void copy("password")}>
+                  <Copy size={17} strokeWidth={2} aria-hidden />
+                </IconButton>
+              )}
             </>
           }
         >
@@ -482,6 +575,16 @@ function EntryPanel({
           )}
         </FieldRow>
       </div>
+      {copied && (
+        <p role="status" className="text-[13px] text-ok-fg">
+          Copied, clears in 30s
+        </p>
+      )}
+      {copyError && (
+        <p role="alert" className="text-[13.5px] text-error-fg">
+          {copyError}
+        </p>
+      )}
 
       <section className="flex flex-col gap-2 rounded-[14px] border border-card-border bg-card px-5 py-4">
         <h3 className="text-[12px] font-semibold tracking-[0.06em] text-label uppercase">Notes</h3>
@@ -561,14 +664,5 @@ function IconButton({
     >
       {children}
     </button>
-  );
-}
-
-// Copying is wired up in Phase 4; until then the buttons are shown but disabled.
-function CopyButton({ label }: { label: string }) {
-  return (
-    <IconButton label={label} disabled>
-      <Copy size={17} strokeWidth={2} aria-hidden />
-    </IconButton>
   );
 }

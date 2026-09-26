@@ -273,6 +273,10 @@ impl AppState {
         self.vault_path.exists()
     }
 
+    pub fn backup_exists(&self) -> bool {
+        vault::backup_path(&self.vault_path).exists()
+    }
+
     pub fn is_unlocked(&self) -> bool {
         self.guard().is_some()
     }

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Sparkles } from "lucide-react";
 import {
   addEntry,
   getEntry,
@@ -8,6 +8,7 @@ import {
   updateEntry,
   type EntrySummary,
 } from "../api";
+import StrengthMeter from "../components/StrengthMeter";
 import {
   MAX_NOTES_CHARS,
   MAX_PASSWORD_CHARS,
@@ -17,11 +18,19 @@ import {
   countChars,
 } from "../entryLimits";
 
+export interface AppliedPassword {
+  text: string;
+  nonce: number;
+}
+
 interface Props {
   /** `null` adds a new entry; a string edits the entry with that id. */
   id: string | null;
   /** Called with the saved entry after a save, or with nothing on cancel. */
   onDone: (saved?: EntrySummary) => void;
+  onOpenGenerator?: () => void;
+  /** A password chosen from the generator panel. `nonce` changes on every choice. */
+  appliedPassword?: AppliedPassword | null;
 }
 
 const REVEAL_DURATION_MS = 30_000;
@@ -30,7 +39,7 @@ const LABEL = "block text-[12px] font-semibold tracking-[0.06em] text-label uppe
 const INPUT =
   "w-full rounded-[10px] border border-input-border bg-input-bg-field px-3 text-[15px] text-text";
 
-export default function EntryEditor({ id, onDone }: Props) {
+export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPassword }: Props) {
   const [title, setTitle] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -46,6 +55,13 @@ export default function EntryEditor({ id, onDone }: Props) {
   const [error, setError] = useState<string | null>(null);
   const passwordId = useId();
   const notesId = useId();
+  const [seenAppliedNonce, setSeenAppliedNonce] = useState<number | null>(null);
+  if (appliedPassword && appliedPassword.nonce !== seenAppliedNonce) {
+    setSeenAppliedNonce(appliedPassword.nonce);
+    setPassword(appliedPassword.text);
+    setPasswordTouched(true);
+    setPasswordVisible(true);
+  }
 
   useEffect(() => {
     if (id === null) return;
@@ -162,6 +178,16 @@ export default function EntryEditor({ id, onDone }: Props) {
                 onContextMenu={(e) => e.preventDefault()}
                 className={`${INPUT} h-10 font-mono select-none placeholder:font-sans placeholder:text-muted`}
               />
+              {onOpenGenerator && (
+                <button
+                  type="button"
+                  onClick={onOpenGenerator}
+                  aria-label="Generate password"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-icon-button hover:bg-nav-active-bg/60"
+                >
+                  <Sparkles size={17} strokeWidth={2} aria-hidden />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleReveal}
@@ -176,6 +202,9 @@ export default function EntryEditor({ id, onDone }: Props) {
               </button>
             </div>
             <Counter value={password} max={MAX_PASSWORD_CHARS} />
+            <div className="mt-2">
+              <StrengthMeter password={password} />
+            </div>
           </div>
           <Field label="Website" value={url} max={MAX_URL_CHARS} onChange={setUrl} />
         </div>
