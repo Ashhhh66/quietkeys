@@ -169,6 +169,9 @@ export const copyPassword = (id: string): Promise<void> => call("copy_password",
 
 export const copyUsername = (id: string): Promise<void> => call("copy_username", { id });
 
+export const copyGeneratedPassword = (value: string): Promise<void> =>
+  call("copy_generated_password", { value });
+
 export const restoreFromBackup = (masterPassword: string): Promise<void> =>
   call("restore_from_backup", { masterPassword });
 

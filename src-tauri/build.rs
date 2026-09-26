@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "change_master_password",
     "copy_password",
     "copy_username",
+    "copy_generated_password",
     "restore_from_backup",
     "export_vault",
 ];

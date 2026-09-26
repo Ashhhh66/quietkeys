@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The generator can copy its password. The copy stays out of clipboard history and clears after 30 seconds.
+
 ## [1.0.0] - [RELEASE DATE]
 
 ### Added

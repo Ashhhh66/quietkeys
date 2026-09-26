@@ -6,15 +6,22 @@ import Generator from "./Generator";
 
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof api>("../api");
-  return { ...actual, generatePassword: vi.fn(), scorePassword: vi.fn() };
+  return {
+    ...actual,
+    generatePassword: vi.fn(),
+    scorePassword: vi.fn(),
+    copyGeneratedPassword: vi.fn(),
+  };
 });
 
 const generatePassword = api.generatePassword as unknown as ReturnType<typeof vi.fn>;
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
+const copyGeneratedPassword = api.copyGeneratedPassword as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   generatePassword.mockReset().mockResolvedValue("Correct-horse-battery-1");
   scorePassword.mockReset().mockResolvedValue({ score: 3, warning: null, suggestions: [] });
+  copyGeneratedPassword.mockReset().mockResolvedValue(undefined);
 });
 
 describe("Generator", () => {
@@ -46,5 +53,31 @@ describe("Generator", () => {
       symbols: false,
       excludeAmbiguous: true,
     });
+  });
+
+  it("copies the generated password and shows the confirmation", async () => {
+    const user = userEvent.setup();
+    render(<Generator />);
+    expect(await screen.findByText("Correct-horse-battery-1")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy password" }));
+
+    expect(copyGeneratedPassword).toHaveBeenCalledWith("Correct-horse-battery-1");
+    expect(screen.getByRole("status")).toHaveTextContent("Copied, clears in 30s");
+  });
+
+  it("hides the copy button when copying is unsupported", async () => {
+    copyGeneratedPassword.mockRejectedValue({
+      kind: "unsupported",
+      message: "Copying isn't available on this system.",
+    });
+    const user = userEvent.setup();
+    render(<Generator />);
+    expect(await screen.findByText("Correct-horse-battery-1")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy password" }));
+
+    expect(screen.queryByRole("button", { name: "Copy password" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

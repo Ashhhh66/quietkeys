@@ -128,6 +128,11 @@ pub fn copy_username(state: State<'_, AppState>, id: String) -> CommandResult<()
 }
 
 #[tauri::command]
+pub fn copy_generated_password(state: State<'_, AppState>, value: String) -> CommandResult<()> {
+    state.copy_generated_password(value)
+}
+
+#[tauri::command]
 pub async fn restore_from_backup(app: AppHandle, master_password: String) -> CommandResult<()> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()

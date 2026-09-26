@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
-import { friendlyMessage, generatePassword, type PasswordOptions } from "../api";
+import { Copy, RefreshCw } from "lucide-react";
+import {
+  copyGeneratedPassword,
+  friendlyMessage,
+  generatePassword,
+  isApiError,
+  type PasswordOptions,
+} from "../api";
 import StrengthMeter from "../components/StrengthMeter";
 
 const DEFAULT_OPTIONS: PasswordOptions = {
@@ -23,6 +29,8 @@ export default function Generator({ onUse, onClose }: Props) {
   const [password, setPassword] = useState("");
   const [working, setWorking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copiesSupported, setCopiesSupported] = useState(true);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +65,20 @@ export default function Generator({ onUse, onClose }: Props) {
     setOptions((current) => ({ ...current, ...partial }));
   }
 
+  async function copy() {
+    try {
+      await copyGeneratedPassword(password);
+      setCopied(true);
+    } catch (err) {
+      if (isApiError(err) && err.kind === "unsupported") {
+        setCopiesSupported(false);
+        setCopied(false);
+        return;
+      }
+      setError(friendlyMessage(err));
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 px-10 py-8">
       <header className="flex items-center justify-between gap-4">
@@ -72,12 +94,29 @@ export default function Generator({ onUse, onClose }: Props) {
         )}
       </header>
       <div className="flex max-w-[520px] flex-col gap-5 rounded-[14px] border border-card-border bg-card px-5 py-5">
-        <p
-          className="font-mono text-[18px] break-all select-none"
-          onContextMenu={(e) => e.preventDefault()}
-        >
-          {password || (working ? "Generating…" : "—")}
-        </p>
+        <div className="flex items-center gap-2">
+          <p
+            className="min-w-0 flex-1 font-mono text-[18px] break-all select-none"
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {password || (working ? "Generating…" : "—")}
+          </p>
+          {copiesSupported && password.length > 0 && (
+            <button
+              type="button"
+              aria-label="Copy password"
+              onClick={() => void copy()}
+              className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-icon-button hover:bg-nav-active-bg/60"
+            >
+              <Copy size={17} strokeWidth={2} aria-hidden />
+            </button>
+          )}
+        </div>
+        {copied && (
+          <p role="status" className="text-[13px] text-ok-fg">
+            Copied, clears in 30s
+          </p>
+        )}
         <StrengthMeter password={password} />
         <label className="flex flex-col gap-2 text-[13.5px] text-text-soft">
           <span className="flex items-center justify-between">

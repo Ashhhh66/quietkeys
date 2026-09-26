@@ -45,6 +45,7 @@ pub fn run() {
             commands::change_master_password,
             commands::copy_password,
             commands::copy_username,
+            commands::copy_generated_password,
             commands::restore_from_backup,
             commands::export_vault,
         ])

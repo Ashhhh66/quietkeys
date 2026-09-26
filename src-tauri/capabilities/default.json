@@ -22,6 +22,7 @@
     "allow-change-master-password",
     "allow-copy-password",
     "allow-copy-username",
+    "allow-copy-generated-password",
     "allow-restore-from-backup",
     "allow-export-vault",
     "dialog:allow-save",

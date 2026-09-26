@@ -443,6 +443,14 @@ impl AppState {
         self.with_vault(|_, _| vault::export_encrypted(&self.vault_path, dest))
     }
 
+    /// Writes a generated password to the concealed clipboard. The vault may be locked.
+    /// `value` is wiped before this returns.
+    pub fn copy_generated_password(&self, mut value: String) -> Result<()> {
+        let result = self.copy_to_clipboard(&value);
+        value.zeroize();
+        result
+    }
+
     /// Writes the entry's password to the OS clipboard from Rust. The password is not
     /// returned to the caller and is not kept after the copy.
     pub fn copy_password(&self, id: &str) -> Result<()> {
@@ -1639,6 +1647,34 @@ mod tests {
 
         state.lock();
         assert!(!state.is_unlocked());
+        assert_eq!(clipboard.current(), 0);
+    }
+
+    #[test]
+    fn copy_generated_password_uses_the_concealed_clipboard_while_locked_or_unlocked() {
+        let dir = TestDir::new();
+        let clipboard = Arc::new(clipboard::FakeClipboard::default());
+        let state = fast_unlocked_with(
+            &dir,
+            Arc::new(SystemClock),
+            Arc::clone(&clipboard) as Arc<dyn ConcealedClipboard>,
+        );
+        state.lock();
+        assert!(!state.is_unlocked());
+
+        state
+            .copy_generated_password("while-locked".to_string())
+            .unwrap();
+        let locked_generation = clipboard.current();
+        assert_ne!(locked_generation, 0);
+
+        state.unlock(&password()).unwrap();
+        state
+            .copy_generated_password("while-unlocked".to_string())
+            .unwrap();
+        assert_ne!(clipboard.current(), locked_generation);
+
+        state.lock();
         assert_eq!(clipboard.current(), 0);
     }
 
