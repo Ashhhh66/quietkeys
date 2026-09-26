@@ -225,7 +225,7 @@ The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROAD
 - [x] Phase 2: app state and commands
 - [x] Phase 3: core interface
 - [x] Phase 4: generator, clipboard, auto-lock, change master password, backups
-- [ ] Phase 5: polish, installers and CI, ending with the v1 release
+- [x] Phase 5: polish, installers and CI, ending with the v1 release
 - [ ] Phase 6: onboarding and Emergency Kit, vault health, import
 - [ ] Phase 7: recovery code with vault format v2, choosing the vault location with conflict detection, TOTP
 - [ ] Phase 8: native host and pairing
