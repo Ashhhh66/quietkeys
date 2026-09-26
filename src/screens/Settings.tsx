@@ -83,11 +83,11 @@ export default function Settings() {
 
   return (
     <div className="flex flex-col gap-6 px-10 py-8">
-      <h2 className="text-[26px] font-semibold tracking-[-0.015em]">Settings</h2>
+      <h2 className="text-[28px] font-semibold tracking-[-0.02em]">Settings</h2>
 
       <form
         onSubmit={handleChange}
-        className="flex max-w-[520px] flex-col gap-4 rounded-[14px] border border-card-border bg-card px-5 py-5"
+        className="flex max-w-[640px] flex-col gap-4 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4"
       >
         <h3 className="text-[16px] font-semibold">Change master password</h3>
         <Field
@@ -129,7 +129,7 @@ export default function Settings() {
         <button
           type="submit"
           disabled={!canChange}
-          className="flex h-10 items-center justify-center gap-2 rounded-[10px] bg-accent text-[14px] font-semibold text-on-accent hover:bg-accent-hover disabled:bg-disabled-bg disabled:text-disabled-fg"
+          className="flex h-10 items-center justify-center gap-2 rounded-[12px] bg-accent-gradient text-[14px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
         >
           {submitting && (
             <LoaderCircle size={18} strokeWidth={2} aria-hidden className="animate-spin" />
@@ -138,7 +138,7 @@ export default function Settings() {
         </button>
       </form>
 
-      <section className="flex max-w-[520px] flex-col gap-3 rounded-[14px] border border-card-border bg-card px-5 py-5">
+      <section className="flex max-w-[640px] flex-col gap-3 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
         <h3 className="text-[16px] font-semibold">Auto-lock</h3>
         <fieldset className="flex flex-col gap-2">
           <legend className="sr-only">Lock after</legend>
@@ -159,18 +159,18 @@ export default function Settings() {
         </fieldset>
       </section>
 
-      <section className="max-w-[520px] rounded-[14px] border border-card-border bg-card px-5 py-5">
+      <section className="max-w-[640px] rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
         <h3 className="mb-2 text-[16px] font-semibold">Theme</h3>
         <ThemeSwitch />
       </section>
 
-      <section className="flex max-w-[520px] flex-col gap-3 rounded-[14px] border border-card-border bg-card px-5 py-5">
+      <section className="flex max-w-[640px] flex-col gap-3 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
         <h3 className="text-[16px] font-semibold">Export backup</h3>
         <button
           type="button"
           onClick={() => void handleExport()}
           disabled={exporting}
-          className="flex h-10 w-fit items-center rounded-[10px] bg-accent px-4 text-[14px] font-semibold text-on-accent hover:bg-accent-hover disabled:bg-disabled-bg disabled:text-disabled-fg"
+          className="flex h-10 w-fit items-center rounded-[12px] bg-accent-gradient px-4 text-[14px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
         >
           {exporting ? "Exporting…" : "Export backup"}
         </button>

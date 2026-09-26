@@ -13,6 +13,8 @@ vi.mock("../api", async () => {
     getPassword: vi.fn(),
     deleteEntry: vi.fn(),
     lock: vi.fn(),
+    copyPassword: vi.fn(),
+    copyUsername: vi.fn(),
     generatePassword: vi.fn(),
     scorePassword: vi.fn(),
   };
@@ -23,6 +25,8 @@ const getEntry = api.getEntry as unknown as ReturnType<typeof vi.fn>;
 const getPassword = api.getPassword as unknown as ReturnType<typeof vi.fn>;
 const deleteEntry = api.deleteEntry as unknown as ReturnType<typeof vi.fn>;
 const lockMock = api.lock as unknown as ReturnType<typeof vi.fn>;
+const copyPassword = api.copyPassword as unknown as ReturnType<typeof vi.fn>;
+const copyUsername = api.copyUsername as unknown as ReturnType<typeof vi.fn>;
 const generatePassword = api.generatePassword as unknown as ReturnType<typeof vi.fn>;
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
 
@@ -44,6 +48,8 @@ beforeEach(() => {
   getPassword.mockReset();
   deleteEntry.mockReset().mockResolvedValue(undefined);
   lockMock.mockReset().mockResolvedValue(undefined);
+  copyPassword.mockReset().mockResolvedValue(undefined);
+  copyUsername.mockReset().mockResolvedValue(undefined);
   generatePassword.mockReset().mockResolvedValue("generated-secret");
   scorePassword.mockReset().mockResolvedValue({ score: 3, warning: null, suggestions: [] });
 });
@@ -136,7 +142,7 @@ describe("VaultList", () => {
     render(<VaultList onLocked={onLocked} />);
     await within(await entryList()).findByText("GitHub");
 
-    await user.click(screen.getByRole("button", { name: "Lock vault" }));
+    await user.click(screen.getByRole("button", { name: /Lock vault/ }));
     await waitFor(() => expect(lockMock).toHaveBeenCalledTimes(1));
     expect(onLocked).toHaveBeenCalledTimes(1);
   });
@@ -179,5 +185,49 @@ describe("VaultList", () => {
     expect(screen.getByRole("heading", { name: "Edit login" })).toBeInTheDocument();
     expect(screen.getByLabelText("Title")).toHaveValue("GitHub draft");
     expect(screen.getByLabelText("Password")).toHaveValue("generated-secret");
+  });
+
+  it("shows a clipboard toast that restarts, and hides it as soon as the vault locks", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ delay: null });
+      render(<VaultList onLocked={vi.fn()} />);
+      await within(await entryList()).findByText("GitHub");
+
+      const details = detailsPanel();
+      await user.click(within(details).getByRole("button", { name: "Copy password" }));
+      const status = () => screen.getByRole("status");
+      expect(status()).toHaveTextContent("Password copied");
+      expect(status()).toHaveTextContent("Clears from clipboard in 30s · not in history");
+      expect(status().textContent).not.toContain("hunter2");
+      expect(copyPassword).toHaveBeenCalledWith("1");
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(status()).toHaveTextContent("Clears from clipboard in 20s");
+
+      await user.click(within(details).getByRole("button", { name: "Copy username" }));
+      expect(status()).toHaveTextContent("Username copied");
+      expect(status()).toHaveTextContent("Clears from clipboard in 30s");
+      expect(copyUsername).toHaveBeenCalledWith("1");
+
+      await user.click(screen.getByRole("button", { name: /Lock vault/ }));
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sorts the list by name", async () => {
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    const list = await entryList();
+    await within(list).findByText("GitHub");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort" }), "name");
+    const titles = within(list)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(titles[0]).toContain("Example Bank");
+    expect(titles[1]).toContain("GitHub");
   });
 });

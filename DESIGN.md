@@ -1,144 +1,168 @@
-# quietkeys — UI Design Spec
+# quietkeys — UI Design Spec (v1.1)
 
-This file describes the exact look of the app. Match it closely. It changes **only presentation**: no behaviour, command, or security rule from PLAN.md may change, and every existing test must still pass.
+This replaces the v1.0 spec. It describes the 1.1 refresh: floating panels, a command palette, labelled actions, and new everyday features. Reference: the "quietkeys 1.1 — full refresh" row of the design canvas (screenshots attached in chat).
 
-Reference screenshots (attached in chat): Vault (dark + light), Unlock (normal, wrong password, throttled), Create vault.
+Rules that still apply:
+
+- Presentation must never weaken a security rule in PLAN.md.
+- Colours only through theme tokens (section 2), never raw hex in components.
+- Fonts bundled locally: Instrument Sans (UI) and JetBrains Mono (passwords). No Google Fonts.
+- Icons: lucide-react, stroke width 2.
+- **Stable UX:** this release moves Lock, copy controls and navigation. The CHANGELOG for 1.1 must say so clearly. After 1.1, the rule applies again as before.
 
 ---
 
-## 1. Fonts and icons
+## 1. Layout
 
-- **UI text:** Instrument Sans (weights 400, 500, 600, 700).
-- **Passwords:** JetBrains Mono (400, 500). Use it for every revealed or masked password.
-- Bundle both **locally** with `@fontsource/instrument-sans` and `@fontsource/jetbrains-mono` (ask before adding). Never load Google Fonts: the CSP and the no-network rule forbid it.
-- Fallback stacks: `'Instrument Sans', system-ui, sans-serif` and `'JetBrains Mono', ui-monospace, monospace`.
-- **Icons:** `lucide-react` (approved), stroke width 2, size 16–18px unless stated.
+- Window default 1280×800, minimum 1024×640.
+- The unlocked app is **three floating panels** on a background, with 12px outer padding and 12px gaps:
+  1. Sidebar, 216px wide
+  2. Entry list, 340px wide
+  3. Details (fills the rest)
+- Generator, Health and Settings replace panels 2 and 3 with one wide panel.
+- Panels: radius 20px, `panel` background, 1px `panel-border`, internal scrolling only.
+- Cards inside panels ("insets"): radius 16px, `inset` background, 1px `panel-border`, padding 16px 18px.
 
 ## 2. Theme tokens
 
-Define both themes in one place (CSS custom properties on `:root[data-theme="dark"]` and `:root[data-theme="light"]`, exposed to Tailwind). Components use tokens only, never raw hex values.
+Dark is the reference design. Light follows the same structure.
 
-| Token                                    | Dark                        | Light                       |
-| ---------------------------------------- | --------------------------- | --------------------------- |
-| `page`                                   | #0F1214                     | #F6F7F5                     |
-| `sidebar`                                | #0B0D0F                     | #EEF0ED                     |
-| `sidebar-border`                         | #1E2428                     | #DDE2DE                     |
-| `card`                                   | #151A1D                     | #FFFFFF                     |
-| `card-border`                            | #232A2F                     | #E1E5E2                     |
-| `text`                                   | #E6EAEC                     | #15191B                     |
-| `text-soft` (notes, form labels)         | #C9D0D4                     | #323A3F                     |
-| `muted`                                  | #98A2A9                     | #5B666C                     |
-| `label` (uppercase labels, meta)         | #8A959C                     | #5F6B72                     |
-| `nav-text`                               | #B3BCC2                     | #3A4449                     |
-| `nav-active-bg`                          | #172024                     | #E0E6E2                     |
-| `input-bg` (search)                      | #151A1D                     | #FFFFFF                     |
-| `input-bg` (Unlock/Setup fields)         | #0F1214                     | #F6F7F5                     |
-| `input-border`                           | #2A3237                     | #D5DBD7                     |
-| `kbd-border`                             | #2A3237                     | #CDD4D0                     |
-| `lock-bg` / `lock-border`                | #12171A / #262D32           | #FFFFFF / #D5DBD7           |
-| `row-selected-bg` / `-border`            | #172A2A / #24433F           | #E2F3EE / #BCE3D8           |
-| `icon-button`                            | #B3BCC2                     | #4A555B                     |
-| `danger-bg` / `-border` / `-fg`          | #1A1415 / #3A2A2C / #F0A8A0 | #FDF0EE / #F0CFCB / #B0352A |
-| `error-bg` / `-border` / `-fg`           | #221617 / #45292B / #F4B5AD | #FDEEEC / #F2C9C4 / #9E2F24 |
-| `warn-bg` / `-border` / `-fg`            | #241F14 / #463B22 / #EBCB8B | #FBF3E1 / #EED9A8 / #744F00 |
-| `badge-bg` / `badge-fg` ("Hides in 30s") | #2A2417 / #E8C27A           | #FBF1DC / #7F5400           |
-| `ok-bg` / `ok-fg` (checklist ticks)      | #1B3A35 / #45C4AE           | #D6F0EA / #0F6E5F           |
-| `disabled-bg` / `disabled-fg`            | #232A2F / #8A959C           | #E4E8E5 / #5A656C           |
-| `accent` (buttons, brand tile)           | #45C4AE                     | #45C4AE                     |
-| `on-accent` (text on accent)             | #06201C                     | #06201C                     |
-| `accent-text` (links, URL)               | #45C4AE                     | #267064                     |
+| Token                                           | Dark                                                                             | Light                                                                            |
+| ----------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `page` (background)                             | radial-gradient(1200px 600px at 75% -10%, #12302B 0%, #0B0F10 55%, #090B0C 100%) | radial-gradient(1200px 600px at 75% -10%, #D9F1EB 0%, #F2F5F3 55%, #F6F7F5 100%) |
+| `panel`                                         | rgba(21,26,29,0.72)                                                              | rgba(255,255,255,0.82)                                                           |
+| `panel-border`                                  | rgba(255,255,255,0.06)                                                           | rgba(15,23,26,0.08)                                                              |
+| `inset`                                         | rgba(0,0,0,0.22)                                                                 | #F4F6F4                                                                          |
+| `field` (inputs)                                | rgba(0,0,0,0.25)                                                                 | #FFFFFF                                                                          |
+| `text`                                          | #E8ECEE                                                                          | #15191B                                                                          |
+| `text-soft`                                     | #C9D0D4                                                                          | #323A3F                                                                          |
+| `muted`                                         | #98A2A9                                                                          | #5B666C                                                                          |
+| `label`                                         | #8E989E                                                                          | #5A656C                                                                          |
+| `nav-text`                                      | #AEB8BE                                                                          | #3A4449                                                                          |
+| `nav-active-bg` / `nav-active-fg`               | rgba(69,196,174,0.14) / #CFF3EC                                                  | #DDF1EC / #0F5E52                                                                |
+| `row-selected-bg`                               | rgba(69,196,174,0.10)                                                            | #E2F3EE                                                                          |
+| `row-selected-ring`                             | rgba(69,196,174,0.25)                                                            | #BCE3D8                                                                          |
+| `accent`                                        | #45C4AE                                                                          | #45C4AE                                                                          |
+| `accent-gradient` (primary buttons, brand tile) | linear-gradient(145deg, #5CD6C0, #2FA590)                                        | same                                                                             |
+| `on-accent`                                     | #06201C                                                                          | #06201C                                                                          |
+| `accent-text` (links)                           | #45C4AE                                                                          | #267064                                                                          |
+| `ok-bg` / `ok-fg`                               | rgba(69,196,174,0.12) / #9FDCD0                                                  | #D6F0EA / #0F6E5F                                                                |
+| `warn-bg` / `warn-fg`                           | #2A2417 / #E8C27A                                                                | #FBF1DC / #7F5400                                                                |
+| `danger-bg` / `danger-border` / `danger-fg`     | rgba(240,168,160,0.06) / rgba(240,168,160,0.25) / #F0A8A0                        | #FDF0EE / #F0CFCB / #B0352A                                                      |
+| `toast-bg` / `toast-border`                     | #1C2327 / rgba(255,255,255,0.1)                                                  | #FFFFFF / rgba(15,23,26,0.12)                                                    |
+| `overlay` (behind dialogs)                      | rgba(4,6,7,0.62)                                                                 | rgba(15,23,26,0.35)                                                              |
 
-All text must meet 4.5:1 contrast in both themes.
+All text meets 4.5:1 contrast in both themes. Theme defaults to the OS setting until the user chooses.
 
-### Theme switching
+Avatar palettes are unchanged from v1.0 (dark and light sets of 6, chosen by hashing the domain).
 
-- Default to the OS setting (`prefers-color-scheme`) until the user chooses.
-- The sidebar has a **"Light theme"** row with a sun icon and a small switch (34×20px pill, 16px white knob; track `accent` when on, #3A4449 when off). Use a real `<button>` with `aria-pressed`.
-- Save the choice in `localStorage` (the theme is not secret). Apply it before first paint to avoid a flash.
+## 3. Typography
 
-## 3. Window
+| Use                                         | Size / weight                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------------- |
+| Screen titles (Generator, Settings, Health) | 28px / 600, letter-spacing −0.02em                                     |
+| Entry title in details                      | 28px / 600                                                             |
+| Section labels                              | 12px / 600, uppercase, letter-spacing 0.06em, `label`                  |
+| Body                                        | 14.5–15.5px / 400–500                                                  |
+| Meta text                                   | 12.5–13px, `muted`                                                     |
+| Passwords                                   | JetBrains Mono 15.5px; masked as 12 bullets with letter-spacing 0.18em |
 
-- Default size 1280×800, minimum 1024×640, in `tauri.conf.json`.
+## 4. Sidebar
 
-## 4. Vault screen (three panels)
+Top to bottom:
 
-### Sidebar (224px wide, `sidebar` bg, right border `sidebar-border`, padding 22px 12px, vertical gap 4px)
+1. Brand: 34×34 tile (radius 11px, `accent-gradient`, soft accent shadow) with KeyRound icon, "quietkeys" 17px/600.
+2. **Search button** (40px, `field` background, border): search icon, "Search", "Ctrl K" hint. Opens the command palette.
+3. Nav items (38px, radius 12px): All items (count), Favourites (count), Recently used, Generator, Health (count of issues), Settings, Recently deleted. Active item uses `nav-active-*`.
+4. Spacer.
+5. **Lock vault** button (min 50px): lock icon, "Lock vault", and underneath in 11.5px `label` the live auto-lock countdown, "Auto-locks in 4:12". "Ctrl L" hint on the right.
 
-- **Brand row** (padding-bottom 22px): 32×32 tile, radius 9px, `accent` bg with a `KeyRound` icon in `on-accent`; "quietkeys" at 17px/600, letter-spacing −0.01em.
-- **Nav items** (40px tall, radius 9px, padding 0 12px, 14px/500, 10px gap between icon and label):
-  - "All items" (`List` icon), active: `nav-active-bg`, `text` colour, count on the right at 12px `muted`.
-  - "Logins" (`KeyRound`), with count.
-  - "Generator" (`Sparkles`) and "Settings" (`Settings`): open the generator and settings screens.
-  - Inactive items: transparent bg, `nav-text`.
-- Spacer, then the **Light theme** row, then the **Lock vault** button: 44px tall, radius 10px, `lock-bg`, 1px `lock-border`, `Lock` icon, label left-aligned, and a keyboard hint pill "Ctrl L" (⌘L on macOS) at 11px `muted`, 1px `kbd-border`, radius 5px, padding 2px 6px.
+Items for features not built yet stay hidden until their step in PLAN-1.1.md lands.
 
-### Entry list (356px wide, right border `sidebar-border`)
+## 5. Entry list
 
-- **Top bar** (padding 20px 16px 12px, gap 10px):
-  - Search field: 44px tall, radius 10px, `input-bg`, 1px `input-border`, `Search` icon, placeholder "Search logins", "Ctrl F" hint pill on the right. Visually hidden label "Search".
-  - Add button: 44×44, radius 10px, `accent` bg, `Plus` icon in `on-accent`, `aria-label="Add login"`.
-- **Heading** (padding 4px 20px 8px): 12px/600, uppercase, letter-spacing 0.06em, `label` colour. Shows "All logins", or "N results" while searching.
-- **Rows** (padding 0 10px 16px, gap 2px, scrolls): each row is a `<button>`, radius 10px, padding 10px, 1px border (transparent, or `row-selected-border` when selected; bg `row-selected-bg` when selected).
-  - Avatar 38×38, radius 10px, letter 16px/700 (see section 7).
-  - Title 14.5px/600, username 13px `muted`, both single-line with ellipsis.
-- **No search results:** centred "No logins match that search." at 14px `muted`.
-- **Empty vault:** centred message "No passwords yet" plus an accent "Add your first login" button.
+- Top: search field (44px, `field`) and a 44×44 Add button (`accent-gradient`).
+- "Sort" label with a dropdown: Recently used (default), Name, Recently changed.
+- **Favourites** section (star icon label) above **All logins**, each only shown when non-empty.
+- Rows: radius 14px, padding 10px 12px, 40×40 avatar (radius 12px), title 14.5px/600, username 13px `muted`, "last used" text on the right (12px). Selected row: `row-selected-bg`, inset ring, and a 3px accent bar on the left edge.
 
-### Details panel (fills remaining width, padding 32px 40px, vertical gap 24px, scrolls)
+## 6. Details panel
 
-- **Header row** (gap 16px): 60×60 avatar (radius 16px, letter 26px/700); title 26px/600 letter-spacing −0.015em with the domain underneath at 14px `muted`; on the right an **Edit** button (40px tall, padding 0 16px, radius 10px, `card` bg, 1px `input-border`, `Pencil` icon) and a **Delete** icon button (40×40, radius 10px, `danger-*` tokens, `Trash2` icon, `aria-label="Delete login"`).
-- **Fields card** (`card` bg, 1px `card-border`, radius 14px). Rows padding 16px 20px, divided by 1px `card-border`:
-  - Label: 12px/600 uppercase, letter-spacing 0.06em, `label` colour. Value: 15px.
-  - **Username** row, with a copy icon button on the right.
-  - **Password** row: masked as 12 bullets (`••••••••••••`, letter-spacing 0.18em) in JetBrains Mono 15px; revealed text uses letter-spacing 0.02em. Eye / EyeOff toggle (40×40 icon button, `aria-label` "Show password"/"Hide password") and a copy button. While revealed, a pill next to the label: `Clock` icon + "Hides in 30s", 12px, `badge-*` tokens, radius 999px, padding 2px 8px.
-  - **Website** row, value in `accent-text`.
-  - Copy buttons copy the username or password and show “Copied, clears in 30s”. If copying is unsupported, both buttons are removed.
-- **Notes card** (same card style, padding 16px 20px, gap 8px): "Notes" label, text 14.5px, line-height 1.55, `text-soft`, `white-space: pre-wrap`. Empty notes show "No notes." in `muted`.
-- **Meta line:** "Created 12 Sep 2026 · Edited 25 Sep 2026" at 12.5px `label`. Format dates as day, short month, year in the user's locale.
-- **Add/Edit** opens in this same right panel, using the same card style for its form fields.
+1. **Header:** 68×68 avatar (radius 20px, soft shadow), title with a **favourite star** button (filled `warn-fg` when on), and the domain as an `accent-text` link with an external-link icon that opens the website in the default browser. Edit button (secondary) and Delete icon button (`danger-*`).
+2. **Action row:** "Copy password" (primary, 44px, with "Ctrl C" hint) and "Copy username" (secondary, "Ctrl B" hint).
+3. **Two insets side by side:** Username; Password (masked, Show/Hide text button top-right, 30-second auto-hide unchanged).
+4. **Status pills:** strength or health status (`ok-*` or `warn-*`), "Changed 3 months ago", "Used today".
+5. **Notes** inset.
+6. **Password history** inset: a collapsible header ("Password history", "2 previous"), rows showing a masked value, "Used until 12 Jun 2026", and Copy. Values are never shown in the list.
 
-## 5. Unlock screen
+## 7. Toasts (bottom-right, stacked, 10px apart)
 
-- Full window `page` bg, content centred.
-- Card: 400px wide, padding 40px 36px, `card` bg, 1px `card-border`, radius 18px, vertical gap 22px.
-- Top (centred): 56×56 tile, radius 16px, `accent` bg with a `Lock` icon (26px) in `on-accent`; "quietkeys" 24px/600; subtitle "Enter your master password to unlock your vault." 14.5px `muted`.
-- Field: label "Master password" 13px/500 `text-soft`; input 46px tall, padding 0 14px, radius 10px, Unlock/Setup `input-bg`, 1px `input-border` (border turns `error` colour after a wrong password).
-- **Wrong password alert** (`role="alert"`): `error-*` tokens, radius 10px, padding 12px 14px, 13.5px, `AlertCircle` icon, text "Incorrect password or corrupted vault."
-- **Throttled alert** (`role="status"`): `warn-*` tokens, `Clock` icon, "Too many attempts. You can try again in N seconds." (singular "second" when N is 1).
-- Primary button: full width, 46px, radius 10px, 15px/600, `accent` bg with `on-accent` text. While throttled or submitting it becomes `disabled-*` with the label "Try again in Ns" (throttled) or a spinner (submitting).
-- Footer: `ShieldCheck` icon (13px) + "Your vault never leaves this computer." 12.5px `label`, centred.
+- **Clipboard toast** (60px, `toast-*`): a 34px progress ring counting down from 30 with the seconds in the middle, "Password copied" / "Username copied", "Clears from clipboard in 24s · not in history", and a "Clear now" button. It disappears when the clipboard clears.
+- **Undo toast** (52px): trash icon, "Deleted **GitHub**", and an "Undo" button (`ok` tint). Visible for 10 seconds.
+- Toasts use `role="status"`.
 
-## 6. Create vault (Setup) screen
+## 8. Command palette
 
-- Same centred card style, 440px wide.
-- Top (left-aligned): 44×44 tile radius 12px with `KeyRound`; heading "Create your vault" 24px/600; subtitle "Choose a master password. It unlocks everything, so make it long and memorable." 14.5px `muted`, line-height 1.5.
-- Two fields: "Master password" and "Confirm master password", same field style as Unlock.
-- **Live checklist** (13.5px, gap 8px), driven by the existing TypeScript rules:
-  - "At least 12 characters"
-  - "No hidden control characters"
-  - "Passwords match"
-  - Met: 20px circle in `ok-bg` with a `Check` icon in `ok-fg`, text `text-soft`. Not met: circle in `disabled-bg` with an `X` icon in `muted`, text `muted`.
-- **Warning box** (`warn-*` tokens, `TriangleAlert` icon, 13px): "There is no password reset. If you forget your master password, your vault can't be recovered."
-- "Create vault" button, full width, disabled style until every rule passes.
-- Show the length counter / character counter exactly as already implemented, styled with `muted` text.
+- Opens with Ctrl/Cmd+K or the sidebar Search button. Closes with Esc or a click on the overlay.
+- 620px wide, top 110px from the window top, radius 18px, `toast-bg`, strong shadow, over `overlay`.
+- Input row 60px, 17px text, "Esc" hint.
+- **Logins** section: up to 5 matches (title and domain), the highlighted one shows "↵ Copy password".
+- **Actions** section: Generate a password (Ctrl G), Add a login (Ctrl N), Lock vault (Ctrl L).
+- Footer hints: "↵ Copy password", "Shift ↵ Copy username", "↑↓ Move".
+- Enter copies the highlighted login's password through the existing secure copy command, closes the palette, and shows the clipboard toast.
+- Fully keyboard operable, `role="dialog"`, focus trapped while open and returned afterwards.
 
-## 7. Letter avatars
+## 9. Unlock screen
 
-- Letter: first character of the entry title, uppercased.
-- Colour: hash the domain (from the URL, or the title if there's no URL) with `h = (h * 31 + charCode) >>> 0` over each character, then pick `palette[h % 6]`.
-- **Dark palette** (bg / letter): #24406A / #DCE8FA, #6E4318 / #FBE6CF, #1D564E / #D2F2EC, #553670 / #EEDDFB, #662C37 / #FADDE2, #4A5320 / #EEF3D2.
-- **Light palette** (bg / letter): #DCE7F8 / #1E3A66, #F8E4CD / #6B3F10, #D3EFE9 / #15524A, #EADDF7 / #4A2C66, #F7DCE1 / #6A2433, #E8EDCF / #434A16.
-- Never fetch favicons or anything from the network.
+- Centred 420px panel: 60px accent tile with a lock icon, "Welcome back", subtitle.
+- Master password field (48px) with a focus ring and a show/hide eye button inside it.
+- **Caps Lock warning** under the field (`warn-fg`, alert icon) whenever Caps Lock is on.
+- Primary "Unlock" button (48px).
+- Footer row: shield icon + "Vault on this computer only" on the left, "Restore from backup" link on the right.
+- Wrong password and throttle alerts as in v1.0.
 
-## 8. Interaction and accessibility
+## 10. Generator
 
-- Every clickable thing is a real `<button>` (or link); icon-only buttons have an `aria-label`.
-- Visible focus ring on keyboard focus: 2px `accent` outline with 2px offset (`:focus-visible` only).
-- Hover: nav items and list rows get a subtle background (`nav-active-bg` at reduced opacity); buttons darken slightly.
-- Shortcuts: Ctrl/⌘+F focuses search, Ctrl/⌘+L locks, Esc closes the editor.
-- Transitions: 120–150ms on background and colour only. Respect `prefers-reduced-motion`.
-- Minimum hit area 40×40px.
+- Title plus a segmented control: **Password | Passphrase**.
+- Result inset: the value in JetBrains Mono 30px. In passphrase mode, separators in `accent` and the number in `warn-fg`.
+- Strength bar (5 segments) with a label ("Very strong") and a plain-English line.
+- Actions: Copy (primary), Regenerate, "Save as new login".
+- Options as insets in a 2-column grid. Passphrase: words 3–10 (default 4), separator chips (- . _ space), "Capitalise the first word", "Add a number". Password mode keeps the v1.0 options.
+- Tip banner (`ok` tint): "Passphrases make great master passwords: long, strong, and something you can actually type."
 
-## 9. Stable UX
+## 11. Settings
 
-Fill and copy controls, Lock, and navigation never move without a note in the [changelog](CHANGELOG.md).
+1. **"Where your data lives"** hero card (accent-tinted gradient, `ok` border): shield icon, title, "Everything stays on this computer. Nothing is ever uploaded." A 2×2 grid:
+   - Vault file: full path in mono 13px, "Show in folder"
+   - Last saved: relative time
+   - Backup: health pill ("Healthy · saved 2 min ago"), "Export a copy"
+   - Encryption: "Argon2id · XChaCha20-Poly1305", "How it works" (links to the README section on GitHub)
+2. Two insets side by side:
+   - **Security:** Auto-lock (segmented 1m/5m/15m/30m), Clear clipboard (30 seconds, fixed), Master password ("Last changed …", Change).
+   - **Appearance:** Theme (System/Light/Dark), Density (Comfortable/Compact), Text size (A/A+/A++).
+3. Footer: version and licence on the left, "Keyboard shortcuts" link on the right (opens a list).
+
+Density "Compact" reduces row padding and control heights by about 20%. Text size scales the base font by 1, 1.1 and 1.2.
+
+## 12. Vault health
+
+- Title and subtitle "Checked on this computer. Nothing is sent anywhere."
+- Three summary insets: Strong, Weak, Reused (46px number tiles, `ok` or `warn` tints).
+- "Fix these first" list: one inset per issue with the avatar, title, a problem pill, a plain-English explanation, and action buttons ("Generate a new password" primary, "Open discord.com" secondary). Reused passwords are grouped into one issue per shared password.
+- Tip banner about updating the password here after changing it on the website.
+
+## 13. Recently deleted
+
+- Same list style as the entry list, each row showing "Deleted 3 days ago · removed forever in 27 days", with Restore and "Delete forever".
+- Banner: "Deleted logins are kept for 30 days, still encrypted, then removed."
+
+## 14. Accessibility and motion
+
+- Every control is a real button or link; icon-only buttons have `aria-label`.
+- `:focus-visible` ring: 2px `accent`, 2px offset.
+- Full keyboard navigation, including list rows (↑↓, Enter to select).
+- Transitions 120–160ms on colour, background, opacity and transform only. `prefers-reduced-motion` disables the ring animation and toast slide-in.
+
+## 15. Stable UX
+
+Fill and copy controls, Lock, and navigation don't move without a note in the changelog.

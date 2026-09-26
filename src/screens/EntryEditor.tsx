@@ -150,7 +150,7 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
   return (
     <form onSubmit={handleSubmit} className="flex min-h-full flex-col">
       <div className="flex flex-col gap-6 px-10 pt-8 pb-4">
-        <h2 className="text-[26px] font-semibold tracking-[-0.015em]">
+        <h2 className="text-[28px] font-semibold tracking-[-0.02em]">
           {id === null ? "Add login" : "Edit login"}
         </h2>
         <div className="divide-y divide-card-border rounded-[14px] border border-card-border bg-card">
@@ -230,11 +230,11 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
           </p>
         )}
       </div>
-      <div className="sticky bottom-0 mt-auto flex gap-2 border-t border-card-border bg-page px-10 py-4">
+      <div className="sticky bottom-0 mt-auto flex gap-2 border-t border-panel-border bg-panel px-10 py-4">
         <button
           type="submit"
           disabled={saving}
-          className="flex h-10 items-center rounded-[10px] bg-accent px-5 text-[14px] font-semibold text-on-accent hover:bg-accent-hover disabled:bg-disabled-bg disabled:text-disabled-fg"
+          className="flex h-10 items-center rounded-[12px] bg-accent-gradient px-5 text-[14px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
         >
           {saving ? "Saving…" : "Save"}
         </button>

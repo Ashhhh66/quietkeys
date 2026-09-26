@@ -1,90 +1,97 @@
 @import "tailwindcss";
 
-/* Theme tokens. Components use the Tailwind utilities mapped below, never raw values. */
+/* Bundled locally. Licences are in src/fonts and ATTRIBUTIONS.md. */
+@font-face {
+  font-family: "Instrument Sans";
+  src: url("./fonts/InstrumentSans-Variable.ttf") format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./fonts/JetBrainsMono-Variable.ttf") format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Theme tokens from DESIGN.md section 2. Components use these, never raw hex. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #0f1214;
-  --sidebar: #0b0d0f;
-  --sidebar-border: #1e2428;
-  --card: #151a1d;
-  --card-border: #232a2f;
-  --text: #e6eaec;
+  --page: radial-gradient(1200px 600px at 75% -10%, #12302b 0%, #0b0f10 55%, #090b0c 100%);
+  --page-solid: #0b0f10;
+  --panel: rgba(21, 26, 29, 0.72);
+  --panel-border: rgba(255, 255, 255, 0.06);
+  --inset: rgba(0, 0, 0, 0.22);
+  --field: rgba(0, 0, 0, 0.25);
+  --text: #e8ecee;
   --text-soft: #c9d0d4;
   --muted: #98a2a9;
-  --label: #8a959c;
-  --nav-text: #b3bcc2;
-  --nav-active-bg: #172024;
-  --input-bg: #151a1d;
-  --input-bg-field: #0f1214;
-  --input-border: #2a3237;
-  --kbd-border: #2a3237;
-  --lock-bg: #12171a;
-  --lock-border: #262d32;
-  --row-selected-bg: #172a2a;
-  --row-selected-border: #24433f;
-  --icon-button: #b3bcc2;
-  --danger-bg: #1a1415;
-  --danger-border: #3a2a2c;
-  --danger-fg: #f0a8a0;
-  --error-bg: #221617;
-  --error-border: #45292b;
-  --error-fg: #f4b5ad;
-  --warn-bg: #241f14;
-  --warn-border: #463b22;
-  --warn-fg: #ebcb8b;
-  --badge-bg: #2a2417;
-  --badge-fg: #e8c27a;
-  --ok-bg: #1b3a35;
-  --ok-fg: #45c4ae;
-  --disabled-bg: #232a2f;
-  --disabled-fg: #8a959c;
+  --label: #8e989e;
+  --nav-text: #aeb8be;
+  --nav-active-bg: rgba(69, 196, 174, 0.14);
+  --nav-active-fg: #cff3ec;
+  --row-selected-bg: rgba(69, 196, 174, 0.1);
+  --row-selected-ring: rgba(69, 196, 174, 0.25);
   --accent: #45c4ae;
+  --accent-gradient: linear-gradient(145deg, #5cd6c0, #2fa590);
   --on-accent: #06201c;
   --accent-text: #45c4ae;
+  --ok-bg: rgba(69, 196, 174, 0.12);
+  --ok-fg: #9fdcd0;
+  --warn-bg: #2a2417;
+  --warn-border: rgba(232, 194, 122, 0.35);
+  --warn-fg: #e8c27a;
+  --danger-bg: rgba(240, 168, 160, 0.06);
+  --danger-border: rgba(240, 168, 160, 0.25);
+  --danger-fg: #f0a8a0;
+  --toast-bg: #1c2327;
+  --toast-border: rgba(255, 255, 255, 0.1);
+  --overlay: rgba(4, 6, 7, 0.62);
+  --disabled-bg: #232a2f;
+  --disabled-fg: #8e989e;
+  --icon-button: #aeb8be;
   --switch-off: #3a4449;
   --switch-knob: #ffffff;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --page: #f6f7f5;
-  --sidebar: #eef0ed;
-  --sidebar-border: #dde2de;
-  --card: #ffffff;
-  --card-border: #e1e5e2;
+  --page: radial-gradient(1200px 600px at 75% -10%, #d9f1eb 0%, #f2f5f3 55%, #f6f7f5 100%);
+  --page-solid: #f6f7f5;
+  --panel: rgba(255, 255, 255, 0.82);
+  --panel-border: rgba(15, 23, 26, 0.08);
+  --inset: #f4f6f4;
+  --field: #ffffff;
   --text: #15191b;
   --text-soft: #323a3f;
   --muted: #5b666c;
-  --label: #5f6b72;
+  --label: #5a656c;
   --nav-text: #3a4449;
-  --nav-active-bg: #e0e6e2;
-  --input-bg: #ffffff;
-  --input-bg-field: #f6f7f5;
-  --input-border: #d5dbd7;
-  --kbd-border: #cdd4d0;
-  --lock-bg: #ffffff;
-  --lock-border: #d5dbd7;
+  --nav-active-bg: #ddf1ec;
+  --nav-active-fg: #0f5e52;
   --row-selected-bg: #e2f3ee;
-  --row-selected-border: #bce3d8;
-  --icon-button: #4a555b;
+  --row-selected-ring: #bce3d8;
+  --accent: #45c4ae;
+  --accent-gradient: linear-gradient(145deg, #5cd6c0, #2fa590);
+  --on-accent: #06201c;
+  --accent-text: #267064;
+  --ok-bg: #d6f0ea;
+  --ok-fg: #0f6e5f;
+  --warn-bg: #fbf1dc;
+  --warn-border: #eed9a8;
+  --warn-fg: #7f5400;
   --danger-bg: #fdf0ee;
   --danger-border: #f0cfcb;
   --danger-fg: #b0352a;
-  --error-bg: #fdeeec;
-  --error-border: #f2c9c4;
-  --error-fg: #9e2f24;
-  --warn-bg: #fbf3e1;
-  --warn-border: #eed9a8;
-  --warn-fg: #744f00;
-  --badge-bg: #fbf1dc;
-  --badge-fg: #7f5400;
-  --ok-bg: #d6f0ea;
-  --ok-fg: #0f6e5f;
+  --toast-bg: #ffffff;
+  --toast-border: rgba(15, 23, 26, 0.12);
+  --overlay: rgba(15, 23, 26, 0.35);
   --disabled-bg: #e4e8e5;
   --disabled-fg: #5a656c;
-  --accent: #45c4ae;
-  --on-accent: #06201c;
-  --accent-text: #267064;
+  --icon-button: #3a4449;
   --switch-off: #3a4449;
   --switch-knob: #ffffff;
 }
@@ -92,31 +99,40 @@
 :root {
   --accent-hover: color-mix(in srgb, var(--accent) 88%, black);
   --danger-bg-hover: color-mix(in srgb, var(--danger-bg) 88%, var(--danger-fg));
+  --error-bg: var(--danger-bg);
+  --error-border: var(--danger-border);
+  --error-fg: var(--danger-fg);
 }
 
 @theme inline {
   --font-sans: "Instrument Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  --color-page: var(--page);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-card: var(--card);
-  --color-card-border: var(--card-border);
+  --color-page: var(--page-solid);
+  --color-panel: var(--panel);
+  --color-panel-border: var(--panel-border);
+  --color-inset: var(--inset);
+  --color-field: var(--field);
+  --color-sidebar: var(--panel);
+  --color-sidebar-border: var(--panel-border);
+  --color-card: var(--panel);
+  --color-card-border: var(--panel-border);
   --color-text: var(--text);
   --color-text-soft: var(--text-soft);
   --color-muted: var(--muted);
   --color-label: var(--label);
   --color-nav-text: var(--nav-text);
   --color-nav-active-bg: var(--nav-active-bg);
-  --color-input-bg: var(--input-bg);
-  --color-input-bg-field: var(--input-bg-field);
-  --color-input-border: var(--input-border);
-  --color-kbd-border: var(--kbd-border);
-  --color-lock-bg: var(--lock-bg);
-  --color-lock-border: var(--lock-border);
+  --color-nav-active-fg: var(--nav-active-fg);
+  --color-input-bg: var(--field);
+  --color-input-bg-field: var(--field);
+  --color-input-border: var(--panel-border);
+  --color-kbd-border: var(--panel-border);
+  --color-lock-bg: var(--inset);
+  --color-lock-border: var(--panel-border);
   --color-row-selected-bg: var(--row-selected-bg);
-  --color-row-selected-border: var(--row-selected-border);
+  --color-row-selected-border: var(--row-selected-ring);
+  --color-row-selected-ring: var(--row-selected-ring);
   --color-icon-button: var(--icon-button);
   --color-danger-bg: var(--danger-bg);
   --color-danger-bg-hover: var(--danger-bg-hover);
@@ -128,10 +144,13 @@
   --color-warn-bg: var(--warn-bg);
   --color-warn-border: var(--warn-border);
   --color-warn-fg: var(--warn-fg);
-  --color-badge-bg: var(--badge-bg);
-  --color-badge-fg: var(--badge-fg);
+  --color-badge-bg: var(--warn-bg);
+  --color-badge-fg: var(--warn-fg);
   --color-ok-bg: var(--ok-bg);
   --color-ok-fg: var(--ok-fg);
+  --color-toast-bg: var(--toast-bg);
+  --color-toast-border: var(--toast-border);
+  --color-overlay: var(--overlay);
   --color-disabled-bg: var(--disabled-bg);
   --color-disabled-fg: var(--disabled-fg);
   --color-accent: var(--accent);
@@ -142,6 +161,10 @@
   --color-switch-knob: var(--switch-knob);
 }
 
+@utility bg-accent-gradient {
+  background-image: var(--accent-gradient);
+}
+
 @layer base {
   html,
   body,
@@ -150,7 +173,7 @@
   }
 
   body {
-    background-color: var(--color-page);
+    background: var(--page);
     color: var(--color-text);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
@@ -173,14 +196,40 @@
   button,
   a,
   input,
-  textarea {
-    transition-property: background-color, color;
-    transition-duration: 130ms;
+  textarea,
+  select {
+    transition-property: color, background-color, opacity, transform;
+    transition-duration: 140ms;
     transition-timing-function: ease-out;
   }
 
   button:disabled {
     cursor: not-allowed;
+  }
+}
+
+.brand-tile {
+  background-image: var(--accent-gradient);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.avatar-shadow {
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--page-solid) 35%, transparent);
+}
+
+.clipboard-toast {
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--page-solid) 55%, transparent);
+  animation: toast-in 150ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
 

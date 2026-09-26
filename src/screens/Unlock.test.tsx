@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Unlock from "./Unlock";
@@ -124,5 +124,44 @@ describe("Unlock", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Incorrect password or corrupted vault.",
     );
+  });
+
+  it("shows and hides the master password", async () => {
+    const user = userEvent.setup();
+    render(<Unlock onUnlocked={vi.fn()} />);
+
+    const input = screen.getByLabelText("Master password");
+    expect(input).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: "Show master password" }));
+    expect(input).toHaveAttribute("type", "text");
+    await user.click(screen.getByRole("button", { name: "Hide master password" }));
+    expect(input).toHaveAttribute("type", "password");
+  });
+
+  it("warns when Caps Lock is on from a key or focus event", () => {
+    render(<Unlock onUnlocked={vi.fn()} />);
+    const input = screen.getByLabelText("Master password");
+
+    function dispatch(type: "keydown" | "keyup" | "focus", capsOn: boolean) {
+      const event =
+        type === "focus"
+          ? new FocusEvent(type, { bubbles: true })
+          : new KeyboardEvent(type, { bubbles: true, key: "a" });
+      Object.defineProperty(event, "getModifierState", {
+        value: (key: string) => capsOn && key === "CapsLock",
+      });
+      act(() => {
+        input.dispatchEvent(event);
+      });
+    }
+
+    dispatch("keydown", true);
+    expect(screen.getByText("Caps Lock is on")).toBeInTheDocument();
+
+    dispatch("keyup", false);
+    expect(screen.queryByText("Caps Lock is on")).not.toBeInTheDocument();
+
+    dispatch("focus", true);
+    expect(screen.getByText("Caps Lock is on")).toBeInTheDocument();
   });
 });

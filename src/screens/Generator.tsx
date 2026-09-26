@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Copy, RefreshCw } from "lucide-react";
 import {
   copyGeneratedPassword,
@@ -7,6 +7,7 @@ import {
   isApiError,
   type PasswordOptions,
 } from "../api";
+import ClipboardToast, { type ClipboardKind } from "../components/ClipboardToast";
 import StrengthMeter from "../components/StrengthMeter";
 
 const DEFAULT_OPTIONS: PasswordOptions = {
@@ -22,15 +23,18 @@ interface Props {
   /** Writes the password into the editor and closes this panel. */
   onUse?: (password: string) => void;
   onClose?: () => void;
+  /** When set, the parent shows the clipboard toast. Otherwise this screen shows it. */
+  onCopied?: (kind: ClipboardKind) => void;
 }
 
-export default function Generator({ onUse, onClose }: Props) {
+export default function Generator({ onUse, onClose, onCopied }: Props) {
   const [options, setOptions] = useState<PasswordOptions>(DEFAULT_OPTIONS);
   const [password, setPassword] = useState("");
   const [working, setWorking] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copiesSupported, setCopiesSupported] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const expireCopy = useCallback(() => setCopiedAt(null), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,11 +72,12 @@ export default function Generator({ onUse, onClose }: Props) {
   async function copy() {
     try {
       await copyGeneratedPassword(password);
-      setCopied(true);
+      if (onCopied) onCopied("password");
+      else setCopiedAt(Date.now());
     } catch (err) {
       if (isApiError(err) && err.kind === "unsupported") {
         setCopiesSupported(false);
-        setCopied(false);
+        setCopiedAt(null);
         return;
       }
       setError(friendlyMessage(err));
@@ -82,41 +87,24 @@ export default function Generator({ onUse, onClose }: Props) {
   return (
     <div className="flex flex-col gap-6 px-10 py-8">
       <header className="flex items-center justify-between gap-4">
-        <h2 className="text-[26px] font-semibold tracking-[-0.015em]">Generator</h2>
+        <h2 className="text-[28px] font-semibold tracking-[-0.02em]">Generator</h2>
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 items-center rounded-[10px] border border-input-border bg-card px-4 text-[14px] font-medium text-text hover:bg-nav-active-bg"
+            className="flex h-10 items-center rounded-[12px] border border-panel-border bg-panel px-4 text-[14px] font-medium text-text hover:bg-nav-active-bg"
           >
             Close
           </button>
         )}
       </header>
-      <div className="flex max-w-[520px] flex-col gap-5 rounded-[14px] border border-card-border bg-card px-5 py-5">
-        <div className="flex items-center gap-2">
-          <p
-            className="min-w-0 flex-1 font-mono text-[18px] break-all select-none"
-            onContextMenu={(e) => e.preventDefault()}
-          >
-            {password || (working ? "Generating…" : "—")}
-          </p>
-          {copiesSupported && password.length > 0 && (
-            <button
-              type="button"
-              aria-label="Copy password"
-              onClick={() => void copy()}
-              className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-icon-button hover:bg-nav-active-bg/60"
-            >
-              <Copy size={17} strokeWidth={2} aria-hidden />
-            </button>
-          )}
-        </div>
-        {copied && (
-          <p role="status" className="text-[13px] text-ok-fg">
-            Copied, clears in 30s
-          </p>
-        )}
+      <div className="flex max-w-[640px] flex-col gap-5 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+        <p
+          className="font-mono text-[15.5px] break-all select-none"
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {password || (working ? "Generating…" : "—")}
+        </p>
         <StrengthMeter password={password} />
         <label className="flex flex-col gap-2 text-[13.5px] text-text-soft">
           <span className="flex items-center justify-between">
@@ -168,11 +156,23 @@ export default function Generator({ onUse, onClose }: Props) {
           </p>
         )}
         <div className="flex flex-wrap gap-2">
+          {copiesSupported && (
+            <button
+              type="button"
+              aria-label="Copy password"
+              disabled={password.length === 0}
+              onClick={() => void copy()}
+              className="flex h-11 items-center gap-2 rounded-[12px] bg-accent-gradient px-4 text-[14.5px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
+            >
+              <Copy size={16} strokeWidth={2} aria-hidden />
+              Copy
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void regenerate()}
             disabled={working}
-            className="flex h-10 items-center gap-2 rounded-[10px] bg-accent px-4 text-[14px] font-semibold text-on-accent hover:bg-accent-hover disabled:bg-disabled-bg disabled:text-disabled-fg"
+            className="flex h-11 items-center gap-2 rounded-[12px] border border-panel-border bg-panel px-4 text-[14.5px] font-medium text-text hover:bg-nav-active-bg disabled:bg-disabled-bg disabled:text-disabled-fg"
           >
             <RefreshCw size={16} strokeWidth={2} aria-hidden />
             Regenerate
@@ -182,13 +182,16 @@ export default function Generator({ onUse, onClose }: Props) {
               type="button"
               disabled={password.length === 0}
               onClick={() => onUse(password)}
-              className="flex h-10 items-center rounded-[10px] border border-input-border bg-card px-4 text-[14px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
+              className="flex h-11 items-center rounded-[12px] border border-panel-border bg-panel px-4 text-[14.5px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
             >
               Use this password
             </button>
           )}
         </div>
       </div>
+      {copiedAt !== null && onCopied === undefined && (
+        <ClipboardToast kind="password" startedAt={copiedAt} onExpire={expireCopy} />
+      )}
     </div>
   );
 }

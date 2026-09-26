@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The generator can copy its password. The copy stays out of clipboard history and clears after 30 seconds.
 
+### Changed
+
+- The unlocked window uses floating panels. Lock, copy controls, and navigation have moved: the sidebar is brand, search, All items, Generator, and Settings, and a copied password or username shows a 30-second toast instead of a line of text.
+
 ## [1.0.0] - [RELEASE DATE]
 
 ### Added

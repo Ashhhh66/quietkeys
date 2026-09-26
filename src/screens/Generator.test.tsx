@@ -63,7 +63,30 @@ describe("Generator", () => {
     await user.click(screen.getByRole("button", { name: "Copy password" }));
 
     expect(copyGeneratedPassword).toHaveBeenCalledWith("Correct-horse-battery-1");
-    expect(screen.getByRole("status")).toHaveTextContent("Copied, clears in 30s");
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Password copied");
+    expect(status).toHaveTextContent("Clears from clipboard in 30s · not in history");
+    expect(status.textContent).not.toContain("Correct-horse-battery-1");
+  });
+
+  it("restarts the clipboard countdown when copying again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ delay: null });
+      render(<Generator />);
+      expect(await screen.findByText("Correct-horse-battery-1")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Copy password" }));
+      expect(screen.getByRole("status")).toHaveTextContent("Clears from clipboard in 30s");
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(screen.getByRole("status")).toHaveTextContent("Clears from clipboard in 20s");
+
+      await user.click(screen.getByRole("button", { name: "Copy password" }));
+      expect(screen.getByRole("status")).toHaveTextContent("Clears from clipboard in 30s");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("hides the copy button when copying is unsupported", async () => {
