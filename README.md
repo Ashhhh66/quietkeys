@@ -7,10 +7,9 @@ Built with Tauri, Rust and TypeScript.
 > [!WARNING]
 > quietkeys is a portfolio and learning project. It has **not been independently audited**. Please don't use it as your only store for passwords that matter. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
-
-![Vault screen, dark theme](docs/screenshots/Dark-Theme.png)
 ![Vault screen, light theme](docs/screenshots/Light-Theme.png)
 
+![Vault screen, dark theme](docs/screenshots/Dark-Theme.png)
 
 ---
 
