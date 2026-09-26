@@ -1415,12 +1415,28 @@ mod tests {
         let create_result = create.join().unwrap();
         let unlock_result = unlock.join().unwrap();
 
-        // Exactly one of the two got to run; the other was rejected as busy.
+        // When the two calls overlap, one is rejected as Busy. When one finishes
+        // before the other takes the slot, both run in sequence: create succeeds and
+        // unlock then fails to decrypt, or unlock finds no file and create succeeds
+        // afterwards. Either way they never both succeed, and at most one is Busy.
         let busy_count = [&create_result, &unlock_result]
             .into_iter()
             .filter(|r| matches!(r, Err(VaultError::Busy)))
             .count();
-        assert_eq!(busy_count, 1, "{create_result:?} / {unlock_result:?}");
+        assert!(busy_count <= 1, "{create_result:?} / {unlock_result:?}");
+        assert!(
+            create_result.is_ok() || matches!(create_result, Err(VaultError::Busy)),
+            "{create_result:?}"
+        );
+        assert!(
+            matches!(
+                unlock_result,
+                Err(VaultError::Busy)
+                    | Err(VaultError::DecryptFailed)
+                    | Err(VaultError::Io(std::io::ErrorKind::NotFound))
+            ),
+            "{unlock_result:?}"
+        );
     }
 
     #[test]
