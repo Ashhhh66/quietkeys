@@ -43,14 +43,14 @@ interface Props {
 const REVEAL_DURATION_MS = 30_000;
 const PASSWORD_MASK = "•".repeat(12);
 
-type SortOrder = "changed" | "name";
+type SortOrder = "added" | "name";
 type ClipboardNotice = { kind: ClipboardKind; startedAt: number };
 
 export default function VaultList({ onLocked }: Props) {
   const [entries, setEntries] = useState<EntrySummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOrder>("changed");
+  const [sort, setSort] = useState<SortOrder>("added");
   const [nav, setNav] = useState<"all" | "generator" | "settings">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<"new" | string | null>(null);
@@ -119,9 +119,8 @@ export default function VaultList({ onLocked }: Props) {
       entry.username.toLowerCase().includes(query) ||
       entry.url.toLowerCase().includes(query),
   );
-  // "Recently changed" keeps the vault's stored order. The list payload has no dates
-  // (PLAN.md: titles, usernames, and URLs only), so a true recency sort waits until
-  // that metadata can be sent without a password.
+  // "Date added" keeps the vault's stored order. A real "Recently changed" sort needs
+  // updated_at on the list, which Step 2 adds. That timestamp is not a secret.
   const sorted = [...filtered].sort((a, b) => {
     if (sort === "name") return a.title.localeCompare(b.title);
     return (
@@ -306,13 +305,17 @@ export default function VaultList({ onLocked }: Props) {
         <button
           type="button"
           onClick={() => void handleLock()}
+          aria-label="Lock vault"
+          aria-describedby="auto-lock-countdown"
           aria-keyshortcuts={shortcutKeys("L")}
           className="mt-2 flex min-h-[50px] w-full items-center gap-2.5 rounded-[12px] px-3 py-2 text-left hover:bg-nav-active-bg/60"
         >
           <Lock size={17} strokeWidth={2} aria-hidden />
           <span className="min-w-0 flex-1">
             <span className="block text-[14px] font-medium">Lock vault</span>
-            <span className="block text-[11.5px] text-label">{formatAutoLock(remainingMs)}</span>
+            <span id="auto-lock-countdown" className="block text-[11.5px] text-label">
+              {formatAutoLock(remainingMs)}
+            </span>
           </span>
           <Kbd>{shortcutLabel("L")}</Kbd>
         </button>
@@ -380,7 +383,7 @@ export default function VaultList({ onLocked }: Props) {
                   onChange={(e) => setSort(e.target.value as SortOrder)}
                   className="h-8 rounded-[8px] border border-panel-border bg-field px-2 text-[13px] text-text"
                 >
-                  <option value="changed">Recently changed</option>
+                  <option value="added">Date added</option>
                   <option value="name">Name</option>
                 </select>
               </label>

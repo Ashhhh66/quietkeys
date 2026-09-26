@@ -20,6 +20,7 @@ Restyle every existing screen to DESIGN.md sections 1–7, 9 and 14 using only f
 
 - Command palette per DESIGN.md section 8, keyboard shortcuts (Ctrl/Cmd+K, C, B, G, N, L, F, Esc) and a "Keyboard shortcuts" list in Settings.
 - Density and text size settings (localStorage).
+- **Recently changed:** add `updated_at` to `EntrySummary`. It is a timestamp, not a secret. Sort the list by it again, and keep "Date added" as the vault's stored order.
 - **Clear clipboard:** add `clear_clipboard`, which clears the clipboard only when its change counter still matches the value quietkeys copied (the same check as the 30-second clear). The clipboard toast gets a "Clear now" button that calls it.
 - **Open website:** add `tauri-plugin-opener` (ask first) with only the permission to open URLs. Rust validates the URL before opening: `https://` or `http://` only, with a host. Anything else (`file:`, `javascript:`, custom schemes) is refused with an error. Test the validation.
 - Tests: palette filtering, Enter and Shift+Enter copy, focus trap and return, shortcut handling, URL validation.

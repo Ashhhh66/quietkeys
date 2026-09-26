@@ -142,7 +142,7 @@ describe("VaultList", () => {
     render(<VaultList onLocked={onLocked} />);
     await within(await entryList()).findByText("GitHub");
 
-    await user.click(screen.getByRole("button", { name: /Lock vault/ }));
+    await user.click(screen.getByRole("button", { name: "Lock vault" }));
     await waitFor(() => expect(lockMock).toHaveBeenCalledTimes(1));
     expect(onLocked).toHaveBeenCalledTimes(1);
   });
@@ -210,7 +210,7 @@ describe("VaultList", () => {
       expect(status()).toHaveTextContent("Clears from clipboard in 30s");
       expect(copyUsername).toHaveBeenCalledWith("1");
 
-      await user.click(screen.getByRole("button", { name: /Lock vault/ }));
+      await user.click(screen.getByRole("button", { name: "Lock vault" }));
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
