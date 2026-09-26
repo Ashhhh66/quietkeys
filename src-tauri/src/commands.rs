@@ -147,7 +147,7 @@ pub async fn export_vault(app: AppHandle) -> CommandResult<()> {
     app.dialog()
         .file()
         .set_title("Export vault")
-        .set_file_name(suggested_export_name())
+        .set_file_name(suggested_export_name(time::OffsetDateTime::now_utc()))
         .save_file(move |path| {
             let _ = tx.send(path);
         });
@@ -164,12 +164,26 @@ pub async fn export_vault(app: AppHandle) -> CommandResult<()> {
     app.state::<AppState>().export_vault(&path)
 }
 
-fn suggested_export_name() -> String {
-    let now = time::OffsetDateTime::now_utc();
+fn suggested_export_name(now: time::OffsetDateTime) -> String {
     format!(
         "quietkeys-backup-{:04}-{:02}-{:02}.quietkeys",
         now.year(),
         u8::from(now.month()),
         now.day()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::suggested_export_name;
+
+    #[test]
+    fn suggested_export_name_uses_the_given_date() {
+        let date = time::Date::from_calendar_date(2026, time::Month::September, 26).unwrap();
+        let now = date.midnight().assume_utc();
+        assert_eq!(
+            suggested_export_name(now),
+            "quietkeys-backup-2026-09-26.quietkeys"
+        );
+    }
 }

@@ -13,6 +13,8 @@ vi.mock("../api", async () => {
     getPassword: vi.fn(),
     deleteEntry: vi.fn(),
     lock: vi.fn(),
+    generatePassword: vi.fn(),
+    scorePassword: vi.fn(),
   };
 });
 
@@ -21,6 +23,8 @@ const getEntry = api.getEntry as unknown as ReturnType<typeof vi.fn>;
 const getPassword = api.getPassword as unknown as ReturnType<typeof vi.fn>;
 const deleteEntry = api.deleteEntry as unknown as ReturnType<typeof vi.fn>;
 const lockMock = api.lock as unknown as ReturnType<typeof vi.fn>;
+const generatePassword = api.generatePassword as unknown as ReturnType<typeof vi.fn>;
+const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
 
 const entries = [
   { id: "1", title: "GitHub", username: "octocat", url: "https://github.com" },
@@ -40,6 +44,8 @@ beforeEach(() => {
   getPassword.mockReset();
   deleteEntry.mockReset().mockResolvedValue(undefined);
   lockMock.mockReset().mockResolvedValue(undefined);
+  generatePassword.mockReset().mockResolvedValue("generated-secret");
+  scorePassword.mockReset().mockResolvedValue({ score: 3, warning: null, suggestions: [] });
 });
 
 function entryList(): Promise<HTMLElement> {
@@ -152,5 +158,26 @@ describe("VaultList", () => {
     await user.keyboard("{Control>}l{/Control}");
     await waitFor(() => expect(lockMock).toHaveBeenCalledTimes(1));
     expect(onLocked).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an unsaved title when a generated password is applied", async () => {
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    await within(await entryList()).findByText("GitHub");
+
+    await user.click(within(detailsPanel()).getByRole("button", { name: "Edit" }));
+    expect(await screen.findByRole("heading", { name: "Edit login" })).toBeInTheDocument();
+    const title = screen.getByLabelText("Title");
+    await user.clear(title);
+    await user.type(title, "GitHub draft");
+
+    await user.click(screen.getByRole("button", { name: "Generate password" }));
+    const usePassword = await screen.findByRole("button", { name: "Use this password" });
+    await waitFor(() => expect(usePassword).toBeEnabled());
+    await user.click(usePassword);
+
+    expect(screen.getByRole("heading", { name: "Edit login" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Title")).toHaveValue("GitHub draft");
+    expect(screen.getByLabelText("Password")).toHaveValue("generated-secret");
   });
 });
