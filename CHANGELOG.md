@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - [RELEASE DATE]
+
 ### Added
 
 - Vault engine: encrypted vault file, Argon2id, atomic saves, and backups.
@@ -14,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core UI: create a vault, unlock, search, and add, edit, delete, and reveal logins.
 - Light and dark themes.
 - Rust side of Phase 4: password generator and strength score, concealed clipboard, change master password, restore from backup, and encrypted export.
+- App icon, and Windows and macOS installers with a SHA256 checksum file.
 
 ### Changed
 

@@ -24,15 +24,49 @@ Built with Tauri, Rust and TypeScript.
 - Unlock throttling after repeated wrong passwords
 - Automatic backup of the previous vault on every save
 - Dark and light themes
-
-**In progress** (see [Roadmap](#roadmap))
-
 - Password generator and strength meter
 - Copy to clipboard with auto-clear, excluded from clipboard history
 - Auto-lock after inactivity
 - Change master password
 - Restore from backup and encrypted export
+
+**In progress** (see [Roadmap](#roadmap))
+
 - Browser extension for autofill
+
+---
+
+## Installing
+
+Release downloads are on the [GitHub releases](https://github.com/Ashhhh66/quietkeys/releases) page: a Windows installer (`.msi`), a macOS disk image (`.dmg`) built for both Apple silicon and Intel, and `SHA256SUMS.txt`.
+
+These builds are not code-signed, so the operating system warns the first time you open the app.
+
+### Windows
+
+SmartScreen may say that Windows protected your PC. Choose **More info**, then **Run anyway**.
+
+### macOS
+
+macOS blocks the app the first time you open it. Go to **System Settings > Privacy & Security** and choose **Open Anyway** next to the message about quietkeys.
+
+### Check the download
+
+`SHA256SUMS.txt` lists one SHA-256 hash for each file. The hash of the file you downloaded has to match the line for that file name.
+
+On Windows, in PowerShell, from the folder that contains the installer:
+
+```powershell
+Get-FileHash .\quietkeys_1.0.0_x64_en-US.msi -Algorithm SHA256
+```
+
+On macOS, in Terminal:
+
+```bash
+shasum -a 256 quietkeys_1.0.0_universal.dmg
+```
+
+Use the file names from the release if they differ. PowerShell prints the hash in uppercase; `SHA256SUMS.txt` uses lowercase. The two match when the characters are the same.
 
 ---
 
@@ -153,7 +187,7 @@ npm run format:check
 npm run tauri build
 ```
 
-Builds are not yet code-signed, so Windows SmartScreen and macOS Gatekeeper will warn you the first time you open the app.
+Builds are not yet code-signed. See [Installing](#installing) for the Windows and macOS warnings.
 
 ---
 
@@ -191,7 +225,7 @@ The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROAD
 - [x] Phase 1: crypto and vault engine
 - [x] Phase 2: app state and commands
 - [x] Phase 3: core interface
-- [ ] Phase 4: generator, clipboard, auto-lock, change master password, backups
+- [x] Phase 4: generator, clipboard, auto-lock, change master password, backups
 - [ ] Phase 5: polish, installers and CI, ending with the v1 release
 - [ ] Phase 6: onboarding and Emergency Kit, vault health, import
 - [ ] Phase 7: recovery code with vault format v2, choosing the vault location with conflict detection, TOTP

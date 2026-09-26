@@ -75,6 +75,18 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+
   macos:
     name: macOS
     runs-on: macos-latest

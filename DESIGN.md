@@ -43,7 +43,7 @@ Define both themes in one place (CSS custom properties on `:root[data-theme="dar
 | `warn-bg` / `-border` / `-fg`            | #241F14 / #463B22 / #EBCB8B | #FBF3E1 / #EED9A8 / #744F00 |
 | `badge-bg` / `badge-fg` ("Hides in 30s") | #2A2417 / #E8C27A           | #FBF1DC / #7F5400           |
 | `ok-bg` / `ok-fg` (checklist ticks)      | #1B3A35 / #45C4AE           | #D6F0EA / #0F6E5F           |
-| `disabled-bg` / `disabled-fg`            | #232A2F / #8A959C           | #E4E8E5 / #5F6B72           |
+| `disabled-bg` / `disabled-fg`            | #232A2F / #8A959C           | #E4E8E5 / #5A656C           |
 | `accent` (buttons, brand tile)           | #45C4AE                     | #45C4AE                     |
 | `on-accent` (text on accent)             | #06201C                     | #06201C                     |
 | `accent-text` (links, URL)               | #45C4AE                     | #267064                     |

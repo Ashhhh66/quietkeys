@@ -1,0 +1,4 @@
+# Fail the build on high and critical advisories. Lower severities are reported
+# and do not fail CI. Advisories with no CVSS score are still reported.
+[advisories]
+severity_threshold = "high"
