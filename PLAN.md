@@ -261,6 +261,8 @@ The unlock throttle is held in memory and resets when the app restarts; it slows
 
 **Known limitation:** If the app is force-closed within 30 seconds of copying, the clipboard is not cleared.
 
+**Known limitation:** Deleted logins stay in the encrypted vault for up to 30 days, and old passwords are kept in history. Both are removed when the login is deleted forever, and a deleted login is also removed once it is older than 30 days.
+
 ## 7b. Git hygiene
 
 - `.gitignore` must exclude `*.quietkeys`, `*.bak`, `target/`, `node_modules/` and any test vault output.

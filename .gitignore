@@ -1,5 +1,6 @@
 # Vault files and backups: never commit these, even encrypted
 *.quietkeys
+!src-tauri/fixtures/v1.0.0-vault.quietkeys
 *.bak
 *.pre-restore
 *.tmp

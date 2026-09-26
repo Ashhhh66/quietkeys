@@ -52,6 +52,11 @@ pub fn run() {
             commands::export_vault,
             commands::clear_clipboard,
             commands::open_entry_website,
+            commands::set_favourite,
+            commands::restore_entry,
+            commands::delete_forever,
+            commands::list_deleted_entries,
+            commands::copy_history_password,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

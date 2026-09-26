@@ -110,6 +110,11 @@ pub struct EntrySummary {
     pub updated_at: String,
     /// Empty when the stored URL is not an address we would open.
     pub host: String,
+    pub favourite: bool,
+    pub last_used_at: Option<String>,
+    /// Set only for rows on the recently deleted screen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<String>,
 }
 
 impl From<&Entry> for EntrySummary {
@@ -121,6 +126,9 @@ impl From<&Entry> for EntrySummary {
             url: entry.url.clone(),
             updated_at: entry.updated_at.clone(),
             host: crate::website::normalized_host(&entry.url).unwrap_or_default(),
+            favourite: entry.favourite,
+            last_used_at: entry.last_used_at.clone(),
+            deleted_at: entry.deleted_at.clone(),
         }
     }
 }
@@ -137,6 +145,8 @@ pub struct EntryDetails {
     pub notes: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Previous passwords by id and date only. The passwords themselves are not here.
+    pub history: Vec<HistoryMeta>,
 }
 
 impl From<&Entry> for EntryDetails {
@@ -149,6 +159,14 @@ impl From<&Entry> for EntryDetails {
             notes: entry.notes.clone(),
             created_at: entry.created_at.clone(),
             updated_at: entry.updated_at.clone(),
+            history: entry
+                .password_history
+                .iter()
+                .map(|item| HistoryMeta {
+                    id: item.id.clone(),
+                    replaced_at: item.replaced_at.clone(),
+                })
+                .collect(),
         }
     }
 }
@@ -166,6 +184,24 @@ impl Serialize for RevealedPassword {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
     }
+}
+
+/// A copy's `last_used_at` waits here until the next save, lock, or the one-minute flush.
+#[derive(Default)]
+struct UsageState {
+    dirty: bool,
+    marked_at: Option<Instant>,
+}
+
+const USAGE_FLUSH_AFTER: Duration = Duration::from_secs(60);
+const MAX_PASSWORD_HISTORY: usize = 10;
+
+/// One previous password, without the password itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryMeta {
+    pub id: String,
+    pub replaced_at: String,
 }
 
 /// Tracks wrong-password attempts. A fresh vault (or one just unlocked) has no throttle.
@@ -203,6 +239,8 @@ pub struct AppState {
     /// How long after a copy to clear the clipboard, if it is still ours. `Duration::ZERO`
     /// means "do not start a timer" (tests clear by calling `lock` or the clipboard directly).
     clipboard_clear_after: Duration,
+    /// A copy updated `last_used_at` in memory and it has not been written yet.
+    usage: Mutex<UsageState>,
     /// Test rendezvous at the start of the new-key Argon2 derivation. Production leaves
     /// this empty, so the derivation is not delayed.
     #[cfg(test)]
@@ -238,6 +276,7 @@ impl AppState {
             clipboard,
             copied_generation: Mutex::new(None),
             clipboard_clear_after,
+            usage: Mutex::new(UsageState::default()),
             #[cfg(test)]
             new_key_gate: Mutex::new(None),
         }
@@ -317,6 +356,9 @@ impl AppState {
             Ok(vault) => {
                 *self.guard() = Some(vault);
                 self.reset_throttle();
+                // A failed purge leaves the entries in place until a later unlock or
+                // deleted-list load can write them out. Unlock itself still succeeds.
+                let _ = self.purge_deleted();
                 Ok(())
             }
             Err(err) => {
@@ -362,8 +404,12 @@ impl AppState {
     /// Drops the unlocked vault, which wipes its key and entries. Also clears the
     /// clipboard when it still holds the value this process copied. Does nothing to the
     /// vault if already locked. A clipboard error (including "unsupported" on Linux)
-    /// does not stop the lock.
+    /// does not stop the lock. A failed flush of pending `last_used_at` timestamps
+    /// does not stop it either: the timestamps are dropped with the wiped memory.
     pub fn lock(&self) {
+        if self.flush_usage().is_err() {
+            self.clear_usage();
+        }
         self.clear_copied();
         *self.guard() = None;
     }
@@ -461,13 +507,34 @@ impl AppState {
     /// returned to the caller and is not kept after the copy.
     pub fn copy_password(&self, id: &str) -> Result<()> {
         let password = self.get_password(id)?;
-        self.copy_to_clipboard(password.expose())
+        self.copy_to_clipboard(password.expose())?;
+        self.note_used(id)
     }
 
     /// Writes the entry's username to the OS clipboard.
     pub fn copy_username(&self, id: &str) -> Result<()> {
-        let username = self.with_vault(|vault, _| Ok(find(&vault.data, id)?.username.clone()))?;
-        self.copy_to_clipboard(&username)
+        let username =
+            self.with_vault(|vault, _| Ok(find_active(&vault.data, id)?.username.clone()))?;
+        self.copy_to_clipboard(&username)?;
+        self.note_used(id)
+    }
+
+    /// Writes one previous password to the clipboard. `history_id` stays valid when a
+    /// newer password is added later. The password is not returned.
+    pub fn copy_history_password(&self, entry_id: &str, history_id: &str) -> Result<()> {
+        let mut password = self.with_vault(|vault, _| {
+            let entry = find_active(&vault.data, entry_id)?;
+            let item = entry
+                .password_history
+                .iter()
+                .find(|item| item.id == history_id)
+                .ok_or(VaultError::EntryNotFound)?;
+            Ok(item.password.clone())
+        })?;
+        let copied = self.copy_to_clipboard(&password);
+        password.zeroize();
+        copied?;
+        self.note_used(entry_id)
     }
 
     /// Clears the clipboard only when it still holds the value quietkeys copied.
@@ -487,7 +554,7 @@ impl AppState {
     /// The stored website for `id`, after it has passed [`crate::website::openable_website`].
     /// The caller opens this string; the UI never supplies a URL.
     pub fn entry_website_url(&self, id: &str) -> Result<String> {
-        let raw = self.with_vault(|vault, _| Ok(find(&vault.data, id)?.url.clone()))?;
+        let raw = self.with_vault(|vault, _| Ok(find_active(&vault.data, id)?.url.clone()))?;
         Ok(crate::website::openable_website(&raw)?.to_string())
     }
 
@@ -527,20 +594,110 @@ impl AppState {
         }
     }
 
+    fn usage_guard(&self) -> MutexGuard<'_, UsageState> {
+        match self.usage.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                *guard = UsageState::default();
+                self.usage.clear_poison();
+                guard
+            }
+        }
+    }
+
+    fn clear_usage(&self) {
+        *self.usage_guard() = UsageState::default();
+    }
+
+    /// Records a use in memory. The file is written on the next ordinary save, on lock,
+    /// or once a minute has passed since the first unflushed use. A copy itself does not
+    /// write the vault.
+    fn note_used(&self, id: &str) -> Result<()> {
+        self.with_vault(|vault, _| {
+            let entry = find_active_mut(&mut vault.data, id)?;
+            entry.last_used_at = Some(now_rfc3339()?);
+            Ok(())
+        })?;
+        let due = {
+            let mut usage = self.usage_guard();
+            if usage.marked_at.is_none() {
+                usage.marked_at = Some(self.clock.now());
+            }
+            usage.dirty = true;
+            usage.marked_at.is_some_and(|marked| {
+                self.clock.now().saturating_duration_since(marked) >= USAGE_FLUSH_AFTER
+            })
+        };
+        if due {
+            let _ = self.flush_usage();
+        }
+        Ok(())
+    }
+
+    /// Writes pending `last_used_at` values. Does nothing when there is nothing pending.
+    fn flush_usage(&self) -> Result<()> {
+        if !self.usage_guard().dirty {
+            return Ok(());
+        }
+        self.with_vault(vault::save)?;
+        self.clear_usage();
+        Ok(())
+    }
+
+    /// Wipes entries deleted more than 30 days ago and saves when that removes any.
+    fn purge_deleted(&self) -> Result<()> {
+        self.with_vault(|vault, path| {
+            let snapshot = vault.data.clone();
+            purge_expired(&mut vault.data, OffsetDateTime::now_utc());
+            if vault.data.entries.len() == snapshot.entries.len() {
+                return Ok(());
+            }
+            if let Err(err) = vault::save(vault, path) {
+                vault.data = snapshot;
+                return Err(err);
+            }
+            Ok(())
+        })
+    }
+
     pub fn list_entries(&self) -> Result<Vec<EntrySummary>> {
-        self.with_vault(|vault, _| Ok(vault.data.entries.iter().map(EntrySummary::from).collect()))
+        self.with_vault(|vault, _| {
+            Ok(vault
+                .data
+                .entries
+                .iter()
+                .filter(|entry| entry.deleted_at.is_none())
+                .map(EntrySummary::from)
+                .collect())
+        })
+    }
+
+    /// Deleted logins only. Passwords and notes are not included. Expired ones are
+    /// wiped first.
+    pub fn list_deleted_entries(&self) -> Result<Vec<EntrySummary>> {
+        self.purge_deleted()?;
+        self.with_vault(|vault, _| {
+            Ok(vault
+                .data
+                .entries
+                .iter()
+                .filter(|entry| entry.deleted_at.is_some())
+                .map(EntrySummary::from)
+                .collect())
+        })
     }
 
     pub fn get_password(&self, id: &str) -> Result<RevealedPassword> {
         self.with_vault(|vault, _| {
-            let entry = find(&vault.data, id)?;
+            let entry = find_active(&vault.data, id)?;
             Ok(RevealedPassword(Zeroizing::new(entry.password.clone())))
         })
     }
 
     /// Every field of one entry except the password.
     pub fn get_entry(&self, id: &str) -> Result<EntryDetails> {
-        self.with_vault(|vault, _| Ok(EntryDetails::from(find(&vault.data, id)?)))
+        self.with_vault(|vault, _| Ok(EntryDetails::from(find_active(&vault.data, id)?)))
     }
 
     pub fn add_entry(&self, mut input: EntryInput) -> Result<EntrySummary> {
@@ -556,6 +713,10 @@ impl AppState {
                 notes: mem::take(&mut input.notes),
                 created_at: now.clone(),
                 updated_at: now,
+                favourite: false,
+                last_used_at: None,
+                password_history: Vec::new(),
+                deleted_at: None,
             };
             let summary = EntrySummary::from(&entry);
             data.entries.push(entry);
@@ -569,11 +730,25 @@ impl AppState {
         self.modify(|data| {
             input.check_lengths()?;
             let now = now_rfc3339()?;
-            let entry = find_mut(data, id)?;
+            let entry = find_active_mut(data, id)?;
             replace_wiping(&mut entry.title, mem::take(&mut input.title));
             replace_wiping(&mut entry.username, mem::take(&mut input.username));
             if let Some(password) = input.password.take() {
-                replace_wiping(&mut entry.password, password);
+                if password != entry.password {
+                    let old = mem::take(&mut entry.password);
+                    entry.password_history.insert(
+                        0,
+                        vault::PasswordHistoryItem {
+                            id: Uuid::new_v4().to_string(),
+                            password: old,
+                            replaced_at: now.clone(),
+                        },
+                    );
+                    while entry.password_history.len() > MAX_PASSWORD_HISTORY {
+                        entry.password_history.pop();
+                    }
+                    entry.password = password;
+                }
             }
             replace_wiping(&mut entry.url, mem::take(&mut input.url));
             replace_wiping(&mut entry.notes, mem::take(&mut input.notes));
@@ -582,15 +757,43 @@ impl AppState {
         })
     }
 
+    /// Hides the entry. It stays encrypted until it is restored, deleted forever, or
+    /// purged 30 days after `deleted_at`.
     pub fn delete_entry(&self, id: &str) -> Result<()> {
+        self.modify(|data| {
+            let entry = find_active_mut(data, id)?;
+            entry.deleted_at = Some(now_rfc3339()?);
+            Ok(())
+        })
+    }
+
+    pub fn restore_entry(&self, id: &str) -> Result<EntrySummary> {
+        self.modify(|data| {
+            let entry = find_deleted_mut(data, id)?;
+            entry.deleted_at = None;
+            Ok(EntrySummary::from(&*entry))
+        })
+    }
+
+    /// Removes a deleted entry and wipes it, including its password history.
+    pub fn delete_forever(&self, id: &str) -> Result<()> {
         self.modify(|data| {
             let index = data
                 .entries
                 .iter()
-                .position(|e| e.id == id)
+                .position(|entry| entry.id == id && entry.deleted_at.is_some())
                 .ok_or(VaultError::EntryNotFound)?;
             data.entries.remove(index);
             Ok(())
+        })
+    }
+
+    /// Does not change `updated_at`. Favourites are not a content edit.
+    pub fn set_favourite(&self, id: &str, favourite: bool) -> Result<EntrySummary> {
+        self.modify(|data| {
+            let entry = find_active_mut(data, id)?;
+            entry.favourite = favourite;
+            Ok(EntrySummary::from(&*entry))
         })
     }
 
@@ -645,18 +848,40 @@ fn seconds_remaining(now: Instant, locked_until: Instant) -> u64 {
     remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
 }
 
-fn find<'a>(data: &'a VaultData, id: &str) -> Result<&'a Entry> {
+fn find_active<'a>(data: &'a VaultData, id: &str) -> Result<&'a Entry> {
     data.entries
         .iter()
-        .find(|e| e.id == id)
+        .find(|entry| entry.id == id && entry.deleted_at.is_none())
         .ok_or(VaultError::EntryNotFound)
 }
 
-fn find_mut<'a>(data: &'a mut VaultData, id: &str) -> Result<&'a mut Entry> {
+fn find_active_mut<'a>(data: &'a mut VaultData, id: &str) -> Result<&'a mut Entry> {
     data.entries
         .iter_mut()
-        .find(|e| e.id == id)
+        .find(|entry| entry.id == id && entry.deleted_at.is_none())
         .ok_or(VaultError::EntryNotFound)
+}
+
+fn find_deleted_mut<'a>(data: &'a mut VaultData, id: &str) -> Result<&'a mut Entry> {
+    data.entries
+        .iter_mut()
+        .find(|entry| entry.id == id && entry.deleted_at.is_some())
+        .ok_or(VaultError::EntryNotFound)
+}
+
+/// Drops entries deleted more than [`vault::DELETED_KEEP_DAYS`] days ago. Dropping an
+/// entry wipes its password and history.
+fn purge_expired(data: &mut VaultData, now: OffsetDateTime) {
+    let keep = time::Duration::days(vault::DELETED_KEEP_DAYS);
+    data.entries.retain(|entry| {
+        let Some(deleted_at) = &entry.deleted_at else {
+            return true;
+        };
+        let Ok(deleted) = OffsetDateTime::parse(deleted_at, &Rfc3339) else {
+            return true;
+        };
+        now - deleted <= keep
+    });
 }
 
 /// Wipes the old value before replacing it, so it isn't left behind in freed memory.
@@ -677,6 +902,36 @@ mod tests {
 
     use super::*;
     use crate::test_util::TestDir;
+
+    #[derive(Default)]
+    struct RememberingClipboard {
+        text: Mutex<String>,
+        current: std::sync::atomic::AtomicU64,
+    }
+
+    impl RememberingClipboard {
+        fn copied(&self) -> String {
+            self.text.lock().unwrap().clone()
+        }
+
+        fn wipe(&self) {
+            self.text.lock().unwrap().zeroize();
+        }
+    }
+
+    impl ConcealedClipboard for RememberingClipboard {
+        fn copy_concealed(&self, text: &str) -> Result<u64> {
+            *self.text.lock().unwrap() = text.to_string();
+            Ok(self
+                .current
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1)
+        }
+
+        fn clear_if_unchanged(&self, _: u64) -> Result<()> {
+            Ok(())
+        }
+    }
 
     const PASSWORD: &str = "correct horse battery staple";
 
@@ -768,8 +1023,22 @@ mod tests {
             ("copy_password", state.copy_password("any-id")),
             ("copy_username", state.copy_username("any-id")),
             (
+                "copy_history_password",
+                state.copy_history_password("any-id", "any-history"),
+            ),
+            (
                 "entry_website_url",
                 state.entry_website_url("any-id").map(drop),
+            ),
+            (
+                "set_favourite",
+                state.set_favourite("any-id", true).map(drop),
+            ),
+            ("restore_entry", state.restore_entry("any-id").map(drop)),
+            ("delete_forever", state.delete_forever("any-id")),
+            (
+                "list_deleted_entries",
+                state.list_deleted_entries().map(drop),
             ),
         ]
     }
@@ -888,7 +1157,16 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            ["host", "id", "title", "updatedAt", "url", "username"]
+            [
+                "favourite",
+                "host",
+                "id",
+                "lastUsedAt",
+                "title",
+                "updatedAt",
+                "url",
+                "username"
+            ]
         );
     }
 
@@ -1094,7 +1372,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_entry_removes_and_saves() {
+    fn delete_entry_hides_the_login_until_it_is_removed_forever() {
         let dir = TestDir::new();
         let state = unlocked_state(&dir);
         let first = state.add_entry(input(1)).unwrap();
@@ -1102,14 +1380,119 @@ mod tests {
 
         state.delete_entry(&first.id).unwrap();
         assert_eq!(state.list_entries().unwrap(), vec![second.clone()]);
+        let deleted = state.list_deleted_entries().unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].id, first.id);
+        assert!(deleted[0].last_used_at.is_none());
         let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
-        assert_eq!(on_disk.data.entries.len(), 1);
-        assert_eq!(on_disk.data.entries[0].id, second.id);
+        assert_eq!(on_disk.data.entries.len(), 2);
+        assert!(on_disk
+            .data
+            .entries
+            .iter()
+            .any(|entry| entry.id == first.id && entry.deleted_at.is_some()));
 
         assert_eq!(
             state.delete_entry(&first.id),
             Err(VaultError::EntryNotFound)
         );
+        state.restore_entry(&first.id).unwrap();
+        assert_eq!(state.list_entries().unwrap().len(), 2);
+        state.delete_entry(&first.id).unwrap();
+        state.delete_forever(&first.id).unwrap();
+        assert!(state.list_deleted_entries().unwrap().is_empty());
+        let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
+        assert_eq!(on_disk.data.entries.len(), 1);
+    }
+
+    #[test]
+    fn history_id_still_copies_the_same_password_after_a_newer_change() {
+        let dir = TestDir::new();
+        let clipboard = Arc::new(RememberingClipboard::default());
+        let state = fast_unlocked_with(
+            &dir,
+            Arc::new(SystemClock),
+            Arc::clone(&clipboard) as Arc<dyn ConcealedClipboard>,
+        );
+        let added = state.add_entry(input(1)).unwrap();
+        let mut next = update_input(1);
+        next.password = Some("second-secret".to_string());
+        state.update_entry(&added.id, next).unwrap();
+        let first_history = state.get_entry(&added.id).unwrap().history;
+        assert_eq!(first_history.len(), 1);
+        let first_id = first_history[0].id.clone();
+
+        let mut newer = update_input(1);
+        newer.password = Some("third-secret".to_string());
+        state.update_entry(&added.id, newer).unwrap();
+        state.copy_history_password(&added.id, &first_id).unwrap();
+        assert_eq!(clipboard.copied(), "secret-password-1");
+        clipboard.wipe();
+        let details = state.get_entry(&added.id).unwrap();
+        let json = serde_json::to_string(&details).unwrap();
+        assert!(!json.contains("secret-password-1"));
+        assert!(!json.contains("second-secret"));
+        assert!(!json.contains("third-secret"));
+        let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
+        let entry = on_disk
+            .data
+            .entries
+            .iter()
+            .find(|entry| entry.id == added.id)
+            .unwrap();
+        assert_eq!(entry.password, "third-secret");
+        assert_eq!(
+            entry
+                .password_history
+                .iter()
+                .find(|item| item.id == first_id)
+                .unwrap()
+                .password,
+            "secret-password-1"
+        );
+    }
+
+    #[test]
+    fn lock_drops_unflushed_last_used_when_the_save_fails() {
+        let dir = TestDir::new();
+        let state = fast_unlocked_with(
+            &dir,
+            Arc::new(SystemClock),
+            Arc::new(clipboard::FakeClipboard::default()),
+        );
+        let added = state.add_entry(input(1)).unwrap();
+        state.copy_password(&added.id).unwrap();
+        assert!(state.list_entries().unwrap()[0].last_used_at.is_some());
+        let before = vault::load(&dir.vault_path(), &password()).unwrap();
+        assert!(before.data.entries[0].last_used_at.is_none());
+
+        let tmp = dir.0.join(format!("{}.tmp", vault::VAULT_FILE_NAME));
+        fs::create_dir(&tmp).unwrap();
+        state.lock();
+        assert!(!state.is_unlocked());
+        let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
+        assert!(on_disk.data.entries[0].last_used_at.is_none());
+    }
+
+    #[test]
+    fn entries_deleted_more_than_thirty_days_ago_are_purged_on_unlock() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let added = state.add_entry(input(1)).unwrap();
+        state.delete_entry(&added.id).unwrap();
+        state.lock();
+
+        let mut vault = vault::load(&dir.vault_path(), &password()).unwrap();
+        vault.data.entries[0].deleted_at = Some("2000-01-01T00:00:00Z".to_string());
+        vault::save(&mut vault, &dir.vault_path()).unwrap();
+        drop(vault);
+
+        let state = AppState::new(dir.vault_path());
+        state.unlock(&password()).unwrap();
+        assert!(state.list_entries().unwrap().is_empty());
+        assert!(state.list_deleted_entries().unwrap().is_empty());
+        let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
+        assert!(on_disk.data.entries.is_empty());
     }
 
     #[test]

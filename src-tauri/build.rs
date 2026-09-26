@@ -21,6 +21,11 @@ const COMMANDS: &[&str] = &[
     "export_vault",
     "clear_clipboard",
     "open_entry_website",
+    "set_favourite",
+    "restore_entry",
+    "delete_forever",
+    "list_deleted_entries",
+    "copy_history_password",
 ];
 
 fn main() {

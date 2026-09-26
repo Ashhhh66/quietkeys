@@ -20,7 +20,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use crate::crypto::{self, KdfParams, Key, NONCE_LEN, SALT_LEN};
 use crate::error::{Result, VaultError};
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
+/// How long a deleted login stays in the encrypted vault before it is wiped.
+pub const DELETED_KEEP_DAYS: i64 = 30;
 pub const KDF_ALG: &str = "argon2id";
 pub const CIPHER_ALG: &str = "xchacha20poly1305";
 pub const VAULT_FILE_NAME: &str = "vault.quietkeys";
@@ -97,7 +99,17 @@ impl VaultFile {
     }
 }
 
+/// An old password kept after a change. `id` stays put when newer items are added.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(deny_unknown_fields)]
+pub struct PasswordHistoryItem {
+    pub id: String,
+    pub password: String,
+    pub replaced_at: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(deny_unknown_fields)]
 pub struct Entry {
     pub id: String,
     pub title: String,
@@ -107,6 +119,18 @@ pub struct Entry {
     pub notes: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Missing on a version 1 plaintext; those entries are not favourites.
+    #[serde(default)]
+    pub favourite: bool,
+    /// Missing on a version 1 plaintext.
+    #[serde(default)]
+    pub last_used_at: Option<String>,
+    /// Missing on a version 1 plaintext. Newest first, at most 10.
+    #[serde(default)]
+    pub password_history: Vec<PasswordHistoryItem>,
+    /// Missing on a version 1 plaintext. Set means the login is in Recently deleted.
+    #[serde(default)]
+    pub deleted_at: Option<String>,
 }
 
 impl fmt::Debug for Entry {
@@ -120,6 +144,13 @@ impl fmt::Debug for Entry {
             .field("notes", &"<redacted>")
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
+            .field("favourite", &self.favourite)
+            .field("last_used_at", &self.last_used_at)
+            .field(
+                "password_history",
+                &format!("<{} redacted>", self.password_history.len()),
+            )
+            .field("deleted_at", &self.deleted_at)
             .finish()
     }
 }
@@ -281,20 +312,31 @@ pub fn save(vault: &mut UnlockedVault, path: &Path) -> Result<()> {
         Some(upgrade) => (&upgrade.header, &upgrade.key),
         None => (&vault.header, &vault.key),
     };
-    let bytes = encrypt_to_file_bytes(&vault.data, header, key)?;
+    let mut header = header.clone();
+    if header.version < FORMAT_VERSION {
+        header.version = FORMAT_VERSION;
+    }
 
     if path.exists() {
         let current = fs::read(path)?;
+        // The first write of a version 2 file over a version 1 file keeps that
+        // version 1 file, once, as vault.quietkeys.v1-backup. Later saves never
+        // replace it. quietkeys 1.0 cannot open a version 2 file.
+        if on_disk_version(&current) == Some(1) {
+            preserve_v1_backup(path, &current)?;
+        }
         if is_good_vault(&current, &vault.key) {
             write_atomic(&backup_path(path), &current)?;
         }
     }
+    let bytes = encrypt_to_file_bytes(&vault.data, &header, key)?;
     write_atomic(path, &bytes)?;
 
     if let Some(upgrade) = vault.upgrade.take() {
         vault.header = upgrade.header;
         vault.key = upgrade.key;
     }
+    vault.header.version = FORMAT_VERSION;
     Ok(())
 }
 
@@ -315,6 +357,12 @@ fn estimated_json_len(data: &VaultData) -> usize {
                 + e.notes.len()
                 + e.created_at.len()
                 + e.updated_at.len()
+                + e.last_used_at.as_ref().map_or(0, String::len)
+                + e.deleted_at.as_ref().map_or(0, String::len)
+                + e.password_history
+                    .iter()
+                    .map(|item| item.id.len() + item.password.len() + item.replaced_at.len())
+                    .sum::<usize>()
         })
         .sum();
     JSON_OVERHEAD_BASE + fields + data.entries.len() * JSON_OVERHEAD_PER_ENTRY
@@ -347,6 +395,31 @@ fn encrypt_to_file_bytes(data: &VaultData, header: &Header, key: &Key) -> Result
 
 pub fn backup_path(path: &Path) -> PathBuf {
     sibling_with_suffix(path, ".bak")
+}
+
+/// `vault.quietkeys.v1-backup`, next to the vault. Written once, the first time a
+/// version 2 file replaces a version 1 file. Never rotated or overwritten.
+pub fn v1_backup_path(path: &Path) -> PathBuf {
+    sibling_with_suffix(path, ".v1-backup")
+}
+
+fn on_disk_version(bytes: &[u8]) -> Option<u32> {
+    let value: Value = serde_json::from_slice(bytes).ok()?;
+    let version = value.get("version")?.as_u64()?;
+    u32::try_from(version).ok()
+}
+
+/// Copies `bytes` to the v1 backup if that file is not already there.
+/// `AlreadyExists` is success: the copy is kept as it was.
+fn preserve_v1_backup(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dest = v1_backup_path(path);
+    if dest.exists() {
+        return Ok(());
+    }
+    match write_new(&dest, bytes) {
+        Err(VaultError::Io(io::ErrorKind::AlreadyExists)) => Ok(()),
+        other => other,
+    }
 }
 
 /// `vault.quietkeys.pre-restore`, next to the vault. Holds the file that a restore replaced.
@@ -399,6 +472,12 @@ pub(crate) fn write_rekeyed_vault(
     path: &Path,
     prepared: PreparedMasterKey,
 ) -> Result<()> {
+    if path.exists() {
+        let current = fs::read(path)?;
+        if on_disk_version(&current) == Some(1) {
+            preserve_v1_backup(path, &current)?;
+        }
+    }
     let new_bytes = encrypt_to_file_bytes(&vault.data, &prepared.header, &prepared.key)?;
     write_atomic(path, &new_bytes)?;
     vault.header = prepared.header;
@@ -515,7 +594,10 @@ fn migrate(value: Value) -> Result<Value> {
         .ok_or(VaultError::InvalidFormat)?;
     let version = u32::try_from(version).map_err(|_| VaultError::InvalidFormat)?;
     match version {
-        FORMAT_VERSION => Ok(value),
+        // Version 1 is decrypted with its original header (the version is part of
+        // the AAD). The plaintext gains the v2 entry fields via serde defaults.
+        // The next save writes version 2.
+        1 | FORMAT_VERSION => Ok(value),
         other => Err(VaultError::UnsupportedVersion(other)),
     }
 }
@@ -626,6 +708,10 @@ mod tests {
             notes: "some notes".to_string(),
             created_at: "2026-09-25T20:00:00Z".to_string(),
             updated_at: "2026-09-25T20:00:00Z".to_string(),
+            favourite: false,
+            last_used_at: None,
+            password_history: Vec::new(),
+            deleted_at: None,
         }
     }
 
@@ -675,7 +761,7 @@ mod tests {
         let dir = TestDir::new();
         new_vault(&dir);
         let json = read_json(&dir.vault_path());
-        assert_eq!(json["version"], 1);
+        assert_eq!(json["version"], 2);
         assert_eq!(json["kdf"]["alg"], "argon2id");
         assert_eq!(json["cipher"]["alg"], "xchacha20poly1305");
         let salt = B64.decode(json["kdf"]["salt"].as_str().unwrap()).unwrap();
@@ -808,15 +894,70 @@ mod tests {
         assert!(load(&path, &password()).is_ok());
     }
 
+    /// This file was produced by quietkeys 1.0.0 (tag `v1.0.0`, commit 195f0a5), not by
+    /// this crate.
+    ///
+    /// Steps:
+    ///   git worktree add ../quietkeys-v100-wt v1.0.0
+    ///   In that tree, a one-off test `vault::tests::write_v1_fixture` called
+    ///   `create_with_params` with `KdfParams::fast()` and the password
+    ///   "correct horse battery staple", pushed the Fixture Bank entry, and `save`d it.
+    ///   `FIXTURE_OUT` was `src-tauri/fixtures/v1.0.0-vault.quietkeys`.
+    ///   The one-off test was not kept. The fast KDF is the one v1.0.0's own tests use,
+    ///   so this suite can decrypt the file without the production Argon2 cost on every
+    ///   load of the backup. The ciphertext and header are that tag's format.
+    #[test]
+    fn v1_fixture_upgrades_once_and_keeps_a_v1_backup() {
+        let dir = TestDir::new();
+        let fixture = include_bytes!("../fixtures/v1.0.0-vault.quietkeys");
+        fs::write(dir.vault_path(), fixture).unwrap();
+        let mut vault = load(&dir.vault_path(), &password()).unwrap();
+        assert_eq!(vault.header().version, 1);
+        let entry = &vault.data.entries[0];
+        assert_eq!(entry.title, "Fixture Bank");
+        assert_eq!(entry.username, "ada@example.com");
+        assert_eq!(entry.password, "fixture-secret-password");
+        assert_eq!(entry.url, "https://fixture.example.com/login");
+        assert_eq!(entry.notes, "fixture notes");
+        assert_eq!(entry.created_at, "2026-01-15T12:00:00Z");
+        assert_eq!(entry.updated_at, "2026-02-01T08:30:00Z");
+        assert!(!entry.favourite);
+        assert!(entry.last_used_at.is_none());
+        assert!(entry.password_history.is_empty());
+        assert!(entry.deleted_at.is_none());
+
+        let original = fs::read(dir.vault_path()).unwrap();
+        save(&mut vault, &dir.vault_path()).unwrap();
+        assert_eq!(read_json(&dir.vault_path())["version"], 2);
+        let backup = v1_backup_path(&dir.vault_path());
+        assert_eq!(fs::read(&backup).unwrap(), original);
+        let opened = load(&backup, &password()).unwrap();
+        assert_eq!(opened.header().version, 1);
+        assert_eq!(opened.data.entries[0].title, "Fixture Bank");
+        assert_eq!(opened.data.entries[0].password, "fixture-secret-password");
+
+        let kept = fs::read(&backup).unwrap();
+        vault.data.entries[0].title = "Renamed".to_string();
+        save(&mut vault, &dir.vault_path()).unwrap();
+        assert_eq!(fs::read(&backup).unwrap(), kept);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&backup).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
     #[test]
     fn unknown_version_is_rejected() {
         let dir = TestDir::new();
         new_vault(&dir);
         let path = dir.vault_path();
         let mut json = read_json(&path);
-        json["version"] = Value::from(2);
+        json["version"] = Value::from(3);
         write_json(&path, &json);
-        assert_eq!(load_err(&path), VaultError::UnsupportedVersion(2));
+        assert_eq!(load_err(&path), VaultError::UnsupportedVersion(3));
     }
 
     #[test]
@@ -1211,9 +1352,16 @@ mod tests {
 
     #[test]
     fn entry_debug_output_redacts_secrets() {
-        let debug = format!("{:?}", sample_entry(1));
+        let mut entry = sample_entry(1);
+        entry.password_history.push(PasswordHistoryItem {
+            id: "hist".to_string(),
+            password: "old-secret-password".to_string(),
+            replaced_at: "2026-09-01T00:00:00Z".to_string(),
+        });
+        let debug = format!("{entry:?}");
         assert!(!debug.contains("p@ss-1"));
         assert!(!debug.contains("some notes"));
+        assert!(!debug.contains("old-secret-password"));
         assert!(debug.contains("<redacted>"));
     }
 

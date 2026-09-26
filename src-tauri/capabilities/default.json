@@ -27,6 +27,11 @@
     "allow-export-vault",
     "allow-clear-clipboard",
     "allow-open-entry-website",
+    "allow-set-favourite",
+    "allow-restore-entry",
+    "allow-delete-forever",
+    "allow-list-deleted-entries",
+    "allow-copy-history-password",
     "dialog:allow-save",
     "core:app:default"
   ]

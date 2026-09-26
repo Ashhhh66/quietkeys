@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { changedLabel, strengthIsWeak, strengthLabel } from "./relativeTime";
+import {
+  changedLabel,
+  deletedAgoLabel,
+  deletedRemainingLabel,
+  strengthIsWeak,
+  strengthLabel,
+  usedLabel,
+  usedUntilLabel,
+} from "./relativeTime";
 
 const NOW = Date.parse("2026-09-26T12:00:00Z");
 
@@ -10,6 +18,15 @@ describe("changedLabel", () => {
     expect(changedLabel("2026-09-20T08:00:00Z", NOW)).toBe("Changed 6 days ago");
     expect(changedLabel("2026-06-26T08:00:00Z", NOW)).toBe("Changed 3 months ago");
     expect(changedLabel("2024-09-26T08:00:00Z", NOW)).toBe("Changed 2 years ago");
+  });
+});
+
+describe("used and deleted labels", () => {
+  it("reuses the same day counts and counts down the 30-day keep", () => {
+    expect(usedLabel("2026-09-26T08:00:00Z", NOW)).toBe("Used today");
+    expect(deletedAgoLabel("2026-09-23T08:00:00Z", NOW)).toBe("Deleted 3 days ago");
+    expect(deletedRemainingLabel("2026-09-23T08:00:00Z", NOW)).toBe("removed forever in 27 days");
+    expect(usedUntilLabel("2026-06-12T00:00:00Z")).toBe("Used until 12 Jun 2026");
   });
 });
 

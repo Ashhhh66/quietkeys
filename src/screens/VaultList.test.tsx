@@ -12,6 +12,11 @@ vi.mock("../api", async () => {
     getEntry: vi.fn(),
     getPassword: vi.fn(),
     deleteEntry: vi.fn(),
+    deleteForever: vi.fn(),
+    restoreEntry: vi.fn(),
+    setFavourite: vi.fn(),
+    listDeletedEntries: vi.fn(),
+    copyHistoryPassword: vi.fn(),
     lock: vi.fn(),
     copyPassword: vi.fn(),
     copyUsername: vi.fn(),
@@ -26,6 +31,11 @@ const listEntries = api.listEntries as unknown as ReturnType<typeof vi.fn>;
 const getEntry = api.getEntry as unknown as ReturnType<typeof vi.fn>;
 const getPassword = api.getPassword as unknown as ReturnType<typeof vi.fn>;
 const deleteEntry = api.deleteEntry as unknown as ReturnType<typeof vi.fn>;
+const deleteForever = api.deleteForever as unknown as ReturnType<typeof vi.fn>;
+const restoreEntry = api.restoreEntry as unknown as ReturnType<typeof vi.fn>;
+const setFavourite = api.setFavourite as unknown as ReturnType<typeof vi.fn>;
+const listDeletedEntries = api.listDeletedEntries as unknown as ReturnType<typeof vi.fn>;
+const copyHistoryPassword = api.copyHistoryPassword as unknown as ReturnType<typeof vi.fn>;
 const lockMock = api.lock as unknown as ReturnType<typeof vi.fn>;
 const copyPassword = api.copyPassword as unknown as ReturnType<typeof vi.fn>;
 const copyUsername = api.copyUsername as unknown as ReturnType<typeof vi.fn>;
@@ -51,6 +61,11 @@ beforeEach(() => {
   }));
   getPassword.mockReset();
   deleteEntry.mockReset().mockResolvedValue(undefined);
+  deleteForever.mockReset().mockResolvedValue(undefined);
+  restoreEntry.mockReset().mockResolvedValue(undefined);
+  setFavourite.mockReset().mockResolvedValue(undefined);
+  listDeletedEntries.mockReset().mockResolvedValue([]);
+  copyHistoryPassword.mockReset().mockResolvedValue(undefined);
   lockMock.mockReset().mockResolvedValue(undefined);
   copyPassword.mockReset().mockResolvedValue(undefined);
   copyUsername.mockReset().mockResolvedValue(undefined);
@@ -123,8 +138,7 @@ describe("VaultList", () => {
     }
   });
 
-  it("asks for confirmation before deleting, and only deletes if confirmed", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+  it("deletes immediately and can undo for a few seconds", async () => {
     const user = userEvent.setup();
     render(<VaultList onLocked={vi.fn()} />);
     await within(await entryList()).findByText("GitHub");
@@ -132,13 +146,67 @@ describe("VaultList", () => {
     await user.click(within(await entryList()).getByRole("button", { name: /GitHub/ }));
     const details = detailsPanel();
     await user.click(within(details).getByRole("button", { name: "Delete login" }));
-    expect(confirmSpy).toHaveBeenCalledWith('Delete "GitHub"? This cannot be undone.');
-    expect(deleteEntry).not.toHaveBeenCalled();
-
-    confirmSpy.mockReturnValue(true);
-    await user.click(within(details).getByRole("button", { name: "Delete login" }));
     await waitFor(() => expect(deleteEntry).toHaveBeenCalledWith("1"));
 
+    const toast = screen.getByRole("status");
+    expect(toast).toHaveTextContent("Deleted");
+    expect(toast).toHaveTextContent("GitHub");
+    await user.click(within(toast).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restoreEntry).toHaveBeenCalledWith("1"));
+  });
+
+  it("stars a login without asking for the password again", async () => {
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    await within(await entryList()).findByText("GitHub");
+    const details = detailsPanel();
+    await user.click(within(details).getByRole("button", { name: "Add to favourites" }));
+    await waitFor(() => expect(setFavourite).toHaveBeenCalledWith("1", true));
+  });
+
+  it("copies a previous password by its id", async () => {
+    getEntry.mockResolvedValue({
+      ...entries[0],
+      notes: "",
+      createdAt: "2026-09-12T10:00:00Z",
+      updatedAt: "2026-09-25T10:00:00Z",
+      history: [{ id: "hist-1", replacedAt: "2026-06-12T00:00:00Z" }],
+    });
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    await within(await entryList()).findByText("GitHub");
+    const details = detailsPanel();
+    await user.click(within(details).getByRole("button", { name: /Password history/ }));
+    await user.click(within(details).getByRole("button", { name: /Copy previous password/ }));
+    await waitFor(() => expect(copyHistoryPassword).toHaveBeenCalledWith("1", "hist-1"));
+  });
+
+  it("asks before deleting a login forever", async () => {
+    listDeletedEntries.mockResolvedValue([
+      {
+        id: "9",
+        title: "Old Bank",
+        username: "ada",
+        url: "",
+        deletedAt: "2026-09-23T08:00:00Z",
+      },
+    ]);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    await within(await entryList()).findByText("GitHub");
+
+    await user.click(screen.getByRole("button", { name: /Recently deleted/ }));
+    expect(await screen.findByText("Old Bank")).toBeInTheDocument();
+    expect(screen.getByText(/removed forever in/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete forever" }));
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(deleteForever).not.toHaveBeenCalled();
+
+    confirmSpy.mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Delete forever" }));
+    await waitFor(() => expect(deleteForever).toHaveBeenCalledWith("9"));
     confirmSpy.mockRestore();
   });
 

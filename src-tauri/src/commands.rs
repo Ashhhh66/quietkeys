@@ -191,6 +191,39 @@ pub fn open_entry_website(
     Ok(())
 }
 
+#[tauri::command]
+pub fn set_favourite(
+    state: State<'_, AppState>,
+    id: String,
+    favourite: bool,
+) -> CommandResult<EntrySummary> {
+    state.set_favourite(&id, favourite)
+}
+
+#[tauri::command]
+pub fn restore_entry(state: State<'_, AppState>, id: String) -> CommandResult<EntrySummary> {
+    state.restore_entry(&id)
+}
+
+#[tauri::command]
+pub fn delete_forever(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.delete_forever(&id)
+}
+
+#[tauri::command]
+pub fn list_deleted_entries(state: State<'_, AppState>) -> CommandResult<Vec<EntrySummary>> {
+    state.list_deleted_entries()
+}
+
+#[tauri::command]
+pub fn copy_history_password(
+    state: State<'_, AppState>,
+    entry_id: String,
+    history_id: String,
+) -> CommandResult<()> {
+    state.copy_history_password(&entry_id, &history_id)
+}
+
 fn suggested_export_name(now: time::OffsetDateTime) -> String {
     format!(
         "quietkeys-backup-{:04}-{:02}-{:02}.quietkeys",

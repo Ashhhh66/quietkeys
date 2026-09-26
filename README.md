@@ -113,12 +113,14 @@ All cryptography runs in Rust. The encryption key never reaches the user interfa
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "kdf": { "alg": "argon2id", "m_kib": 65536, "t": 3, "p": 1, "salt": "<base64>" },
   "cipher": { "alg": "xchacha20poly1305", "nonce": "<base64>" },
   "ciphertext": "<base64>"
 }
 ```
+
+New vaults, and any vault saved by version 1.1, use format version 2. A vault saved by 1.1 cannot be opened by 1.0. The first time 1.1 saves over a 1.0 vault, it copies that file once to `vault.quietkeys.v1-backup` in the same folder (readable by your user only). That copy is never overwritten, so the original 1.0 vault can still be opened with the password it had at the upgrade.
 
 ---
 
@@ -144,6 +146,7 @@ All cryptography runs in Rust. The encryption key never reaches the user interfa
 - Serialising the vault can leave small fragments of plaintext in freed memory. The final buffer is wiped and pre-allocated to keep this to a minimum.
 - The unlock throttle is held in memory and resets when the app restarts. It slows guessing at the machine, while Argon2id protects a stolen vault file.
 - There is no password reset. If you forget your master password, the vault can't be recovered.
+- Deleted logins stay in the encrypted vault for up to 30 days, and previous passwords are kept in the entry's history, until you delete the login forever or the 30 days pass.
 
 ---
 

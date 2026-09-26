@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-forever"
+description = "Enables the delete_forever command without any pre-configured scope."
+commands.allow = ["delete_forever"]
+
+[[permission]]
+identifier = "deny-delete-forever"
+description = "Denies the delete_forever command without any pre-configured scope."
+commands.deny = ["delete_forever"]

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Clock,
   Copy,
   ExternalLink,
   KeyRound,
@@ -10,14 +11,18 @@ import {
   Search,
   Settings,
   Sparkles,
+  Star,
   Trash2,
   type LucideIcon,
 } from "lucide-react";
 import {
   clearClipboard,
+  copyHistoryPassword,
   copyPassword,
   copyUsername,
   deleteEntry,
+  deleteForever,
+  listDeletedEntries,
   friendlyMessage,
   getEntry,
   getPassword,
@@ -25,6 +30,8 @@ import {
   listEntries,
   lock as apiLock,
   openEntryWebsite,
+  restoreEntry,
+  setFavourite,
   type EntryDetails,
   type EntrySummary,
 } from "../api";
@@ -34,7 +41,15 @@ import CommandPalette from "../components/CommandPalette";
 import Kbd, { shortcutKeys, shortcutLabel } from "../components/Kbd";
 import { formatAutoLock, useIdleLock } from "../hooks/useIdleLock";
 import { usePasswordScore } from "../hooks/usePasswordScore";
-import { changedLabel, strengthIsWeak, strengthLabel } from "../relativeTime";
+import {
+  changedLabel,
+  deletedAgoLabel,
+  deletedRemainingLabel,
+  strengthIsWeak,
+  strengthLabel,
+  usedLabel,
+  usedUntilLabel,
+} from "../relativeTime";
 import EntryEditor, { type AppliedPassword } from "./EntryEditor";
 import Generator from "./Generator";
 import SettingsScreen from "./Settings";
@@ -46,8 +61,16 @@ interface Props {
 const REVEAL_DURATION_MS = 30_000;
 const PASSWORD_MASK = "•".repeat(12);
 
-type SortOrder = "added" | "name" | "changed";
+type SortOrder = "used" | "added" | "name" | "changed";
+type VaultNav = "all" | "favourites" | "recent" | "generator" | "settings" | "deleted";
 type ClipboardNotice = { kind: ClipboardKind; startedAt: number };
+type UndoNotice = { id: string; title: string; startedAt: number };
+
+const UNDO_MS = 10_000;
+
+function clockNow(): number {
+  return Date.now();
+}
 
 function hasTextSelection(target: EventTarget | null): boolean {
   if (
@@ -66,8 +89,9 @@ export default function VaultList({ onLocked }: Props) {
   const [entries, setEntries] = useState<EntrySummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortOrder>("added");
-  const [nav, setNav] = useState<"all" | "generator" | "settings">("all");
+  const [sort, setSort] = useState<SortOrder>("used");
+  const [nav, setNav] = useState<VaultNav>("all");
+  const [undo, setUndo] = useState<UndoNotice | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<"new" | string | null>(null);
   const [generatorOverEditor, setGeneratorOverEditor] = useState(false);
@@ -137,27 +161,47 @@ export default function VaultList({ onLocked }: Props) {
       entry.username.toLowerCase().includes(query) ||
       entry.url.toLowerCase().includes(query),
   );
-  // "Date added" keeps the vault's stored order. "Recently changed" uses updated_at,
-  // which is a timestamp and not a secret. Equal timestamps keep stored order.
+  // "Date added" keeps the vault's stored order. Equal timestamps keep that order.
+  // "Recently used" is the default; logins that have never been copied sort last.
+  const storedOrder = (a: EntrySummary, b: EntrySummary) =>
+    entries.findIndex((entry) => entry.id === a.id) -
+    entries.findIndex((entry) => entry.id === b.id);
   const sorted = [...filtered].sort((a, b) => {
-    if (sort === "name") return a.title.localeCompare(b.title);
-    if (sort === "changed") {
+    if (nav === "recent" || sort === "used") {
+      const aUsed = a.lastUsedAt ?? "";
+      const bUsed = b.lastUsedAt ?? "";
+      if (aUsed !== bUsed) return bUsed.localeCompare(aUsed);
+    } else if (sort === "name") {
+      return a.title.localeCompare(b.title);
+    } else if (sort === "changed") {
       const byDate = (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
       if (byDate !== 0) return byDate;
     }
-    return (
-      entries.findIndex((entry) => entry.id === a.id) -
-      entries.findIndex((entry) => entry.id === b.id)
-    );
+    return storedOrder(a, b);
   });
+  const visible =
+    nav === "favourites"
+      ? sorted.filter((entry) => entry.favourite)
+      : nav === "recent"
+        ? sorted.filter((entry) => entry.lastUsedAt)
+        : sorted;
+  const favouriteRows = nav === "all" && !query ? visible.filter((entry) => entry.favourite) : [];
+  const otherRows = nav === "all" && !query ? visible.filter((entry) => !entry.favourite) : visible;
 
   // Keep an explicit choice when it is still in the list. Otherwise show the first
   // visible login, so the details panel is filled as soon as the vault has entries.
   const selected =
-    sorted.find((entry) => entry.id === selectedId) ??
-    (editing === null ? (sorted[0] ?? null) : null);
+    visible.find((entry) => entry.id === selectedId) ??
+    (editing === null && nav !== "deleted" ? (visible[0] ?? null) : null);
   const highlightedId = editing === "new" ? null : (editing ?? selected?.id ?? null);
-  const wide = (nav === "generator" || nav === "settings") && editing === null;
+  const wide = (nav === "generator" || nav === "settings" || nav === "deleted") && editing === null;
+
+  function selectEntry(id: string) {
+    setSelectedId(id);
+    setEditing(null);
+    setGeneratorOverEditor(false);
+    setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
+  }
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -193,7 +237,7 @@ export default function VaultList({ onLocked }: Props) {
       } else if (
         mod &&
         (key === "c" || key === "b") &&
-        nav === "all" &&
+        (nav === "all" || nav === "favourites" || nav === "recent") &&
         editing === null &&
         highlightedId
       ) {
@@ -210,18 +254,18 @@ export default function VaultList({ onLocked }: Props) {
         setEditing(null);
       } else if (
         (e.key === "ArrowDown" || e.key === "ArrowUp") &&
-        nav === "all" &&
+        (nav === "all" || nav === "favourites" || nav === "recent") &&
         editing === null &&
         !(e.target instanceof HTMLElement && e.target.closest("input, textarea, select"))
       ) {
-        if (sorted.length === 0) return;
+        if (visible.length === 0) return;
         e.preventDefault();
-        const current = sorted.findIndex((entry) => entry.id === highlightedId);
+        const current = visible.findIndex((entry) => entry.id === highlightedId);
         const nextIndex =
           e.key === "ArrowDown"
-            ? Math.min(sorted.length - 1, current < 0 ? 0 : current + 1)
+            ? Math.min(visible.length - 1, current < 0 ? 0 : current + 1)
             : Math.max(0, current < 0 ? 0 : current - 1);
-        const next = sorted[nextIndex];
+        const next = visible[nextIndex];
         if (!next) return;
         selectEntry(next.id);
         window.setTimeout(() => document.getElementById(`entry-${next.id}`)?.focus(), 0);
@@ -229,24 +273,41 @@ export default function VaultList({ onLocked }: Props) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [editing, focusSearch, handleLock, highlightedId, nav, paletteOpen, sorted]);
+  }, [editing, focusSearch, handleLock, highlightedId, nav, paletteOpen, visible]);
 
   async function handleDelete(entry: EntrySummary) {
-    if (!window.confirm(`Delete "${entry.title}"? This cannot be undone.`)) return;
     try {
       await deleteEntry(entry.id);
       setSelectedId((current) => (current === entry.id ? null : current));
+      setUndo({ id: entry.id, title: entry.title, startedAt: clockNow() });
       await refresh();
     } catch (err) {
       setError(isApiError(err) ? err.message : "Could not delete the entry");
     }
   }
 
-  function selectEntry(id: string) {
-    setSelectedId(id);
-    setEditing(null);
-    setGeneratorOverEditor(false);
-    setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
+  async function toggleFavourite(entry: EntrySummary) {
+    const next = !entry.favourite;
+    try {
+      await setFavourite(entry.id, next);
+      setEntries((current) =>
+        current.map((item) => (item.id === entry.id ? { ...item, favourite: next } : item)),
+      );
+    } catch (err) {
+      setError(friendlyMessage(err));
+    }
+  }
+
+  async function undoDelete() {
+    if (!undo) return;
+    try {
+      await restoreEntry(undo.id);
+      setUndo(null);
+      setNav("all");
+      await refresh();
+    } catch (err) {
+      setError(friendlyMessage(err));
+    }
   }
 
   function startNewEntry() {
@@ -322,6 +383,8 @@ export default function VaultList({ onLocked }: Props) {
     );
   } else if (nav === "generator") {
     details = <Generator onCopied={noticeCopy} />;
+  } else if (nav === "deleted") {
+    details = <DeletedScreen onChanged={() => void refresh()} />;
   } else if (selected) {
     details = (
       <EntryPanel
@@ -330,6 +393,7 @@ export default function VaultList({ onLocked }: Props) {
         onEdit={() => setEditing(selected.id)}
         onDelete={() => handleDelete(selected)}
         onCopied={noticeCopy}
+        onFavourite={() => void toggleFavourite(selected)}
       />
     );
   }
@@ -365,6 +429,27 @@ export default function VaultList({ onLocked }: Props) {
             }}
           />
           <NavItem
+            icon={Star}
+            label="Favourites"
+            count={entries.filter((entry) => entry.favourite).length}
+            active={nav === "favourites"}
+            onClick={() => {
+              setNav("favourites");
+              setEditing(null);
+              setGeneratorOverEditor(false);
+            }}
+          />
+          <NavItem
+            icon={Clock}
+            label="Recently used"
+            active={nav === "recent"}
+            onClick={() => {
+              setNav("recent");
+              setEditing(null);
+              setGeneratorOverEditor(false);
+            }}
+          />
+          <NavItem
             icon={Sparkles}
             label="Generator"
             active={nav === "generator" || generatorOverEditor}
@@ -382,6 +467,16 @@ export default function VaultList({ onLocked }: Props) {
             active={nav === "settings"}
             onClick={() => {
               setNav("settings");
+              setEditing(null);
+              setGeneratorOverEditor(false);
+            }}
+          />
+          <NavItem
+            icon={Trash2}
+            label="Recently deleted"
+            active={nav === "deleted"}
+            onClick={() => {
+              setNav("deleted");
               setEditing(null);
               setGeneratorOverEditor(false);
             }}
@@ -458,22 +553,29 @@ export default function VaultList({ onLocked }: Props) {
             <div className="flex items-center justify-between px-4 pt-1 pb-2">
               <h2 className="text-[12px] font-semibold tracking-[0.06em] text-label uppercase">
                 {query
-                  ? `${sorted.length} ${sorted.length === 1 ? "result" : "results"}`
-                  : "All logins"}
+                  ? `${visible.length} ${visible.length === 1 ? "result" : "results"}`
+                  : nav === "favourites"
+                    ? "Favourites"
+                    : nav === "recent"
+                      ? "Recently used"
+                      : "All logins"}
               </h2>
-              <label className="flex items-center gap-2 text-[12.5px] text-muted">
-                Sort
-                <select
-                  aria-label="Sort"
-                  value={sort}
-                  onChange={(e) => setSort(e.target.value as SortOrder)}
-                  className="h-8 rounded-[8px] border border-panel-border bg-field px-2 text-[13px] text-text"
-                >
-                  <option value="added">Date added</option>
-                  <option value="name">Name</option>
-                  <option value="changed">Recently changed</option>
-                </select>
-              </label>
+              {nav !== "recent" && (
+                <label className="flex items-center gap-2 text-[12.5px] text-muted">
+                  Sort
+                  <select
+                    aria-label="Sort"
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as SortOrder)}
+                    className="h-8 rounded-[8px] border border-panel-border bg-field px-2 text-[13px] text-text"
+                  >
+                    <option value="used">Recently used</option>
+                    <option value="name">Name</option>
+                    <option value="changed">Recently changed</option>
+                    <option value="added">Date added</option>
+                  </select>
+                </label>
+              )}
             </div>
             {error && (
               <p
@@ -495,47 +597,78 @@ export default function VaultList({ onLocked }: Props) {
                   Add your first login
                 </button>
               </div>
-            ) : sorted.length === 0 ? (
+            ) : visible.length === 0 ? (
               <div className="flex flex-1 items-center justify-center px-6 pb-16 text-center">
-                <p className="text-[14px] text-muted">No logins match that search.</p>
+                <p className="text-[14px] text-muted">
+                  {query
+                    ? "No logins match that search."
+                    : nav === "favourites"
+                      ? "No favourites yet."
+                      : "No recently used logins."}
+                </p>
               </div>
             ) : (
-              <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2.5 pb-4">
-                {sorted.map((entry) => {
-                  const isSelected = entry.id === highlightedId;
-                  return (
-                    <li key={entry.id}>
-                      <button
-                        type="button"
-                        id={`entry-${entry.id}`}
-                        onClick={() => selectEntry(entry.id)}
-                        aria-current={isSelected ? "true" : undefined}
-                        className={`relative flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left ${
-                          isSelected
-                            ? "bg-row-selected-bg ring-1 ring-row-selected-ring ring-inset"
-                            : "hover:bg-nav-active-bg/60"
-                        }`}
-                      >
-                        {isSelected && (
-                          <span
-                            aria-hidden
-                            className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-full bg-accent"
-                          />
-                        )}
-                        <Avatar title={entry.title} url={entry.url} />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14.5px] font-semibold text-text">
-                            {entry.title}
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2.5 pb-4">
+                {favouriteRows.length > 0 && (
+                  <>
+                    <h3 className="flex items-center gap-1.5 px-2 pt-1 text-[12px] font-semibold tracking-[0.06em] text-label uppercase">
+                      <Star size={12} strokeWidth={2} aria-hidden />
+                      Favourites
+                    </h3>
+                    <ul aria-label="Favourites" className="flex flex-col gap-1">
+                      {favouriteRows.map((entry) => (
+                        <LoginRow
+                          key={entry.id}
+                          entry={entry}
+                          selected={entry.id === highlightedId}
+                          onSelect={selectEntry}
+                        />
+                      ))}
+                    </ul>
+                  </>
+                )}
+                <ul className="flex flex-col gap-1">
+                  {otherRows.map((entry) => {
+                    const isSelected = entry.id === highlightedId;
+                    return (
+                      <li key={entry.id}>
+                        <button
+                          type="button"
+                          id={`entry-${entry.id}`}
+                          onClick={() => selectEntry(entry.id)}
+                          aria-current={isSelected ? "true" : undefined}
+                          className={`relative flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left ${
+                            isSelected
+                              ? "bg-row-selected-bg ring-1 ring-row-selected-ring ring-inset"
+                              : "hover:bg-nav-active-bg/60"
+                          }`}
+                        >
+                          {isSelected && (
+                            <span
+                              aria-hidden
+                              className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-full bg-accent"
+                            />
+                          )}
+                          <Avatar title={entry.title} url={entry.url} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[14.5px] font-semibold text-text">
+                              {entry.title}
+                            </span>
+                            <span className="block truncate text-[13px] text-muted">
+                              {entry.username}
+                            </span>
                           </span>
-                          <span className="block truncate text-[13px] text-muted">
-                            {entry.username}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                          {entry.lastUsedAt && (
+                            <span className="shrink-0 text-[12px] text-muted">
+                              {usedLabel(entry.lastUsedAt)}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
             )}
           </section>
           <main
@@ -545,6 +678,15 @@ export default function VaultList({ onLocked }: Props) {
             {details}
           </main>
         </>
+      )}
+      {undo && (
+        <UndoToast
+          title={undo.title}
+          startedAt={undo.startedAt}
+          stacked={clipboard !== null}
+          onUndo={() => void undoDelete()}
+          onExpire={() => setUndo((current) => (current?.id === undo.id ? null : current))}
+        />
       )}
       {clipboard && (
         <ClipboardToast
@@ -617,11 +759,13 @@ function EntryPanel({
   onEdit,
   onDelete,
   onCopied,
+  onFavourite,
 }: {
   entry: EntrySummary;
   onEdit: () => void;
   onDelete: () => void;
   onCopied: (kind: ClipboardKind) => void;
+  onFavourite: () => void;
 }) {
   const [details, setDetails] = useState<EntryDetails | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -629,6 +773,7 @@ function EntryPanel({
   const [copiesSupported, setCopiesSupported] = useState(true);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const score = usePasswordScore(revealed ?? "");
 
   async function copy(which: ClipboardKind) {
@@ -716,6 +861,22 @@ function EntryPanel({
             </p>
           )}
         </div>
+        <button
+          type="button"
+          aria-label={entry.favourite ? "Remove from favourites" : "Add to favourites"}
+          aria-pressed={entry.favourite === true}
+          onClick={onFavourite}
+          className={`flex size-10 shrink-0 items-center justify-center rounded-[12px] border border-panel-border bg-inset hover:bg-nav-active-bg ${
+            entry.favourite ? "text-warn-fg" : "text-muted"
+          }`}
+        >
+          <Star
+            size={17}
+            strokeWidth={2}
+            fill={entry.favourite ? "currentColor" : "none"}
+            aria-hidden
+          />
+        </button>
         <button
           type="button"
           onClick={onEdit}
@@ -811,6 +972,11 @@ function EntryPanel({
             {changedLabel(details.updatedAt)}
           </span>
         )}
+        {entry.lastUsedAt && (
+          <span className="rounded-full bg-inset px-2.5 py-1 text-[12.5px] font-medium text-muted">
+            {usedLabel(entry.lastUsedAt)}
+          </span>
+        )}
       </div>
 
       {copyError && (
@@ -832,6 +998,54 @@ function EntryPanel({
         )}
       </section>
 
+      {(details?.history?.length ?? 0) > 0 && (
+        <section className="rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+          <button
+            type="button"
+            aria-expanded={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
+            className="flex w-full items-center justify-between text-left"
+          >
+            <span className="text-[12px] font-semibold tracking-[0.06em] text-label uppercase">
+              Password history
+            </span>
+            <span className="text-[13px] text-muted">{details?.history?.length} previous</span>
+          </button>
+          {historyOpen && (
+            <ul className="mt-3 flex flex-col gap-2">
+              {details?.history?.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex items-center justify-between gap-3 rounded-[12px] border border-panel-border px-3 py-2"
+                >
+                  <span>
+                    <span className="block font-mono text-[14px] tracking-[0.18em] select-none">
+                      {PASSWORD_MASK}
+                    </span>
+                    <span className="text-[12px] text-muted">
+                      {usedUntilLabel(item.replacedAt)}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Copy previous password ${usedUntilLabel(item.replacedAt)}`}
+                    onClick={() => {
+                      void copyHistoryPassword(entry.id, item.id)
+                        .then(() => onCopied("password"))
+                        .catch((err) => setCopyError(friendlyMessage(err)));
+                    }}
+                    className="flex h-8 items-center gap-1.5 rounded-[10px] border border-panel-border px-2.5 text-[13px] font-medium text-text hover:bg-nav-active-bg"
+                  >
+                    <Copy size={14} strokeWidth={2} aria-hidden />
+                    Copy
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       {loadError && (
         <p
           role="alert"
@@ -840,6 +1054,193 @@ function EntryPanel({
           {loadError}
         </p>
       )}
+    </div>
+  );
+}
+
+function LoginRow({
+  entry,
+  selected,
+  onSelect,
+}: {
+  entry: EntrySummary;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        id={`entry-${entry.id}`}
+        onClick={() => onSelect(entry.id)}
+        aria-current={selected ? "true" : undefined}
+        className={`relative flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left ${
+          selected
+            ? "bg-row-selected-bg ring-1 ring-row-selected-ring ring-inset"
+            : "hover:bg-nav-active-bg/60"
+        }`}
+      >
+        {selected && (
+          <span
+            aria-hidden
+            className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-full bg-accent"
+          />
+        )}
+        <Avatar title={entry.title} url={entry.url} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[14.5px] font-semibold text-text">
+            {entry.title}
+          </span>
+          <span className="block truncate text-[13px] text-muted">{entry.username}</span>
+        </span>
+        {entry.lastUsedAt && (
+          <span className="shrink-0 text-[12px] text-muted">{usedLabel(entry.lastUsedAt)}</span>
+        )}
+      </button>
+    </li>
+  );
+}
+
+function DeletedScreen({ onChanged }: { onChanged: () => void }) {
+  const [rows, setRows] = useState<EntrySummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      setRows(await listDeletedEntries());
+      setError(null);
+    } catch (err) {
+      setError(friendlyMessage(err));
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await listDeletedEntries();
+        if (!cancelled) setRows(result);
+      } catch (err) {
+        if (!cancelled) setError(friendlyMessage(err));
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function restore(row: EntrySummary) {
+    try {
+      await restoreEntry(row.id);
+      await reload();
+      onChanged();
+    } catch (err) {
+      setError(friendlyMessage(err));
+    }
+  }
+
+  async function removeForever(row: EntrySummary) {
+    if (!window.confirm(`Delete "${row.title}" forever? This cannot be undone.`)) return;
+    try {
+      await deleteForever(row.id);
+      await reload();
+    } catch (err) {
+      setError(friendlyMessage(err));
+    }
+  }
+
+  return (
+    <div className="flex h-full flex-col px-8 py-7">
+      <h2 className="text-[22px] font-semibold tracking-[-0.02em]">Recently deleted</h2>
+      <p className="mt-2 max-w-[52ch] text-[14px] text-text-soft">
+        Deleted logins are kept for 30 days, still encrypted, then removed.
+      </p>
+      {error && (
+        <p role="alert" className="mt-4 text-[13.5px] text-error-fg">
+          {error}
+        </p>
+      )}
+      {!loaded ? null : rows.length === 0 ? (
+        <p className="mt-8 text-[14px] text-muted">Nothing in Recently deleted.</p>
+      ) : (
+        <ul className="mt-6 flex flex-col gap-2">
+          {rows.map((row) => (
+            <li
+              key={row.id}
+              className="flex items-center gap-3 rounded-[14px] border border-panel-border px-3 py-2.5"
+            >
+              <Avatar title={row.title} url={row.url} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[14.5px] font-semibold">{row.title}</span>
+                <span className="block text-[12.5px] text-muted">
+                  {row.deletedAt
+                    ? `${deletedAgoLabel(row.deletedAt)} · ${deletedRemainingLabel(row.deletedAt)}`
+                    : "Deleted"}
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => void restore(row)}
+                className="h-9 rounded-[10px] border border-panel-border px-3 text-[13px] font-medium hover:bg-nav-active-bg"
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                onClick={() => void removeForever(row)}
+                className="h-9 rounded-[10px] border border-danger-border bg-danger-bg px-3 text-[13px] font-medium text-danger-fg hover:bg-danger-bg-hover"
+              >
+                Delete forever
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function UndoToast({
+  title,
+  startedAt,
+  stacked,
+  onUndo,
+  onExpire,
+}: {
+  title: string;
+  startedAt: number;
+  stacked: boolean;
+  onUndo: () => void;
+  onExpire: () => void;
+}) {
+  useEffect(() => {
+    const remaining = UNDO_MS - (Date.now() - startedAt);
+    const timer = window.setTimeout(onExpire, Math.max(0, remaining));
+    return () => window.clearTimeout(timer);
+  }, [startedAt, onExpire]);
+
+  return (
+    <div
+      role="status"
+      className={`fixed right-3 z-40 flex min-h-[52px] max-w-[calc(100%-24px)] items-center gap-3 rounded-[16px] border border-toast-border bg-toast-bg px-3.5 py-2 text-text ${
+        stacked ? "bottom-20" : "bottom-3"
+      }`}
+    >
+      <p className="text-[14px]">
+        Deleted <span className="font-semibold">{title}</span>
+      </p>
+      <button
+        type="button"
+        onClick={onUndo}
+        className="h-8 rounded-[10px] bg-accent-gradient px-3 text-[13px] font-semibold text-on-accent"
+      >
+        Undo
+      </button>
     </div>
   );
 }

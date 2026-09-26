@@ -81,6 +81,15 @@ export interface EntrySummary {
   updatedAt?: string;
   /** Host as the url crate normalises it. Empty or omitted when the URL cannot be opened. */
   host?: string;
+  favourite?: boolean;
+  lastUsedAt?: string | null;
+  /** Present on recently deleted rows. */
+  deletedAt?: string | null;
+}
+
+export interface HistoryMeta {
+  id: string;
+  replacedAt: string;
 }
 
 /** Every entry field except the password. */
@@ -92,6 +101,8 @@ export interface EntryDetails {
   notes: string;
   createdAt: string;
   updatedAt: string;
+  /** Previous passwords by id and date. The passwords themselves are not included. */
+  history?: HistoryMeta[];
 }
 
 export interface EntryInput {
@@ -188,3 +199,15 @@ export const clearClipboard = (): Promise<void> => call("clear_clipboard");
 
 /** Opens the entry's stored website. The UI sends the id, never a URL. */
 export const openEntryWebsite = (id: string): Promise<void> => call("open_entry_website", { id });
+
+export const setFavourite = (id: string, favourite: boolean): Promise<EntrySummary> =>
+  call("set_favourite", { id, favourite });
+
+export const restoreEntry = (id: string): Promise<EntrySummary> => call("restore_entry", { id });
+
+export const deleteForever = (id: string): Promise<void> => call("delete_forever", { id });
+
+export const listDeletedEntries = (): Promise<EntrySummary[]> => call("list_deleted_entries");
+
+export const copyHistoryPassword = (entryId: string, historyId: string): Promise<void> =>
+  call("copy_history_password", { entryId, historyId });

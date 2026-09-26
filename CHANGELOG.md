@@ -14,11 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A copied password or username can be cleared immediately, and only while the clipboard still holds what quietkeys copied.
 - A login's website opens in the browser only when its stored address is http or https, has a host, and has no username or password. The details panel shows that host in its normalised form.
 - Settings can switch density and text size, and lists the keyboard shortcuts.
-- The login list can be sorted by recently changed.
+- The login list can be sorted by recently changed, and opens sorted by recently used.
+- Favourites, password history, and a Recently deleted list. Deleted logins stay in the encrypted vault for 30 days, then are removed. A delete can be undone for 10 seconds; deleting forever still asks first.
+- Each previous password has its own id, so copying one still copies that password after a newer change.
 
 ### Changed
 
-- The unlocked window uses floating panels. Lock, copy controls, and navigation have moved: the sidebar is brand, search, All items, Generator, and Settings, and a copied password or username shows a 30-second toast instead of a line of text.
+- The unlocked window uses floating panels. Lock, copy controls, and navigation have moved: the sidebar is brand, search, All items, Favourites, Recently used, Generator, Settings, and Recently deleted, and a copied password or username shows a 30-second toast instead of a line of text.
+- Saves use vault format version 2. A vault saved by 1.1 cannot be opened by 1.0. The first time 1.1 saves over a 1.0 vault, it keeps a one-time copy at `vault.quietkeys.v1-backup` in the same folder and never overwrites that copy.
 
 ## [1.0.0] - [RELEASE DATE]
 
