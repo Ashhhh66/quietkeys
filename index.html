@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>quietkeys</title>
+    <script>
+      (function () {
+        var theme = null;
+        try {
+          theme = localStorage.getItem("quietkeys.theme");
+        } catch (e) {}
+        if (theme !== "light" && theme !== "dark") {
+          theme =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        }
+        document.documentElement.setAttribute("data-theme", theme);
+      })();
+    </script>
   </head>
 
   <body>

@@ -8,7 +8,7 @@ type Screen = "loading" | "setup" | "unlock" | "vault";
 
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <main className="flex h-screen items-center justify-center bg-slate-900 text-slate-100">
+    <main className="flex h-screen items-center justify-center bg-page text-[14px] text-muted">
       {children}
     </main>
   );

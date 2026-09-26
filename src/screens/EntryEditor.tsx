@@ -1,5 +1,13 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { addEntry, getEntry, getPassword, isApiError, updateEntry } from "../api";
+import { useEffect, useId, useState, type FormEvent } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import {
+  addEntry,
+  getEntry,
+  getPassword,
+  isApiError,
+  updateEntry,
+  type EntrySummary,
+} from "../api";
 import {
   MAX_NOTES_CHARS,
   MAX_PASSWORD_CHARS,
@@ -12,10 +20,15 @@ import {
 interface Props {
   /** `null` adds a new entry; a string edits the entry with that id. */
   id: string | null;
-  onDone: () => void;
+  /** Called with the saved entry after a save, or with nothing on cancel. */
+  onDone: (saved?: EntrySummary) => void;
 }
 
 const REVEAL_DURATION_MS = 30_000;
+
+const LABEL = "block text-[12px] font-semibold tracking-[0.06em] text-label uppercase";
+const INPUT =
+  "w-full rounded-[10px] border border-input-border bg-input-bg-field px-3 text-[15px] text-text";
 
 export default function EntryEditor({ id, onDone }: Props) {
   const [title, setTitle] = useState("");
@@ -31,6 +44,8 @@ export default function EntryEditor({ id, onDone }: Props) {
   const [loading, setLoading] = useState(id !== null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const passwordId = useId();
+  const notesId = useId();
 
   useEffect(() => {
     if (id === null) return;
@@ -93,10 +108,11 @@ export default function EntryEditor({ id, onDone }: Props) {
     setSaving(true);
     setError(null);
     try {
+      let saved: EntrySummary;
       if (id === null) {
-        await addEntry({ title, username, password, url, notes });
+        saved = await addEntry({ title, username, password, url, notes });
       } else {
-        await updateEntry(id, {
+        saved = await updateEntry(id, {
           title,
           username,
           password: passwordTouched ? password : undefined,
@@ -104,7 +120,7 @@ export default function EntryEditor({ id, onDone }: Props) {
           notes,
         });
       }
-      onDone();
+      onDone(saved);
     } catch (err) {
       setError(isApiError(err) ? err.message : "Could not save the entry");
       setSaving(false);
@@ -112,19 +128,24 @@ export default function EntryEditor({ id, onDone }: Props) {
   }
 
   if (loading) {
-    return <Centered>Loading…</Centered>;
+    return <p className="px-10 py-8 text-[14px] text-muted">Loading…</p>;
   }
 
   return (
-    <main className="min-h-screen bg-slate-900 p-6 text-slate-100">
-      <form onSubmit={handleSubmit} className="max-w-md space-y-4">
-        <h1 className="text-xl font-semibold">{id === null ? "Add entry" : "Edit entry"}</h1>
-        <Field label="Title" value={title} max={MAX_TITLE_CHARS} onChange={setTitle} />
+    <form onSubmit={handleSubmit} className="flex flex-col gap-6 px-10 py-8">
+      <h2 className="text-[26px] font-semibold tracking-[-0.015em]">
+        {id === null ? "Add login" : "Edit login"}
+      </h2>
+      <div className="divide-y divide-card-border rounded-[14px] border border-card-border bg-card">
+        <Field label="Title" value={title} max={MAX_TITLE_CHARS} onChange={setTitle} autoFocus />
         <Field label="Username" value={username} max={MAX_USERNAME_CHARS} onChange={setUsername} />
-        <div>
-          <label className="mb-1 block text-sm">Password</label>
-          <div className="flex gap-2">
+        <div className="px-5 py-4">
+          <label className={`${LABEL} mb-2`} htmlFor={passwordId}>
+            Password
+          </label>
+          <div className="flex items-center gap-2">
             <input
+              id={passwordId}
               type={passwordVisible ? "text" : "password"}
               value={password}
               placeholder={id === null ? "" : "(unchanged — reveal to view or edit)"}
@@ -133,43 +154,63 @@ export default function EntryEditor({ id, onDone }: Props) {
                 setPasswordTouched(true);
               }}
               onContextMenu={(e) => e.preventDefault()}
-              className="flex-1 rounded bg-slate-800 px-3 py-2 select-none"
+              className={`${INPUT} h-10 font-mono select-none placeholder:font-sans placeholder:text-muted`}
             />
-            <button type="button" onClick={handleReveal} className="text-sm text-sky-400">
-              {passwordVisible ? "Hide" : "Reveal"}
+            <button
+              type="button"
+              onClick={handleReveal}
+              aria-label={passwordVisible ? "Hide password" : "Show password"}
+              className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-icon-button hover:bg-nav-active-bg/60"
+            >
+              {passwordVisible ? (
+                <EyeOff size={17} strokeWidth={2} aria-hidden />
+              ) : (
+                <Eye size={17} strokeWidth={2} aria-hidden />
+              )}
             </button>
           </div>
           <Counter value={password} max={MAX_PASSWORD_CHARS} />
         </div>
-        <Field label="URL" value={url} max={MAX_URL_CHARS} onChange={setUrl} />
-        <div>
-          <label className="mb-1 block text-sm" htmlFor="notes">
-            Notes
-          </label>
-          <textarea
-            id="notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={4}
-            className="w-full rounded bg-slate-800 px-3 py-2"
-          />
-          <Counter value={notes} max={MAX_NOTES_CHARS} />
-        </div>
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <div className="flex gap-2">
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded bg-sky-600 px-4 py-2 disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-          <button type="button" onClick={onDone} className="rounded bg-slate-700 px-4 py-2">
-            Cancel
-          </button>
-        </div>
-      </form>
-    </main>
+        <Field label="Website" value={url} max={MAX_URL_CHARS} onChange={setUrl} />
+      </div>
+      <div className="rounded-[14px] border border-card-border bg-card px-5 py-4">
+        <label className={`${LABEL} mb-2`} htmlFor={notesId}>
+          Notes
+        </label>
+        <textarea
+          id={notesId}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={5}
+          className={`${INPUT} py-2.5 text-[14.5px] leading-[1.55]`}
+        />
+        <Counter value={notes} max={MAX_NOTES_CHARS} />
+      </div>
+      {error && (
+        <p
+          role="alert"
+          className="rounded-[10px] border border-error-border bg-error-bg px-3.5 py-3 text-[13.5px] text-error-fg"
+        >
+          {error}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex h-10 items-center rounded-[10px] bg-accent px-5 text-[14px] font-semibold text-on-accent hover:bg-accent-hover disabled:bg-disabled-bg disabled:text-disabled-fg"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="button"
+          onClick={() => onDone()}
+          className="flex h-10 items-center rounded-[10px] border border-input-border bg-card px-5 text-[14px] font-medium text-text hover:bg-nav-active-bg"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -178,19 +219,26 @@ function Field({
   value,
   max,
   onChange,
+  autoFocus = false,
 }: {
   label: string;
   value: string;
   max: number;
   onChange: (value: string) => void;
+  autoFocus?: boolean;
 }) {
+  const id = useId();
   return (
-    <div>
-      <label className="mb-1 block text-sm">{label}</label>
+    <div className="px-5 py-4">
+      <label className={`${LABEL} mb-2`} htmlFor={id}>
+        {label}
+      </label>
       <input
+        id={id}
         value={value}
+        autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded bg-slate-800 px-3 py-2"
+        className={`${INPUT} h-10`}
       />
       <Counter value={value} max={max} />
     </div>
@@ -201,16 +249,8 @@ function Counter({ value, max }: { value: string; max: number }) {
   const count = countChars(value);
   const over = count > max;
   return (
-    <p className={`text-xs ${over ? "text-red-400" : "text-slate-500"}`}>
+    <p className={`mt-1.5 text-right text-[12px] ${over ? "text-error-fg" : "text-muted"}`}>
       {count}/{max}
     </p>
-  );
-}
-
-function Centered({ children }: { children: ReactNode }) {
-  return (
-    <main className="flex h-screen items-center justify-center bg-slate-900 text-slate-100">
-      {children}
-    </main>
   );
 }

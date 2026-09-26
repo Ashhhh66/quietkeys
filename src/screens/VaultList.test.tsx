@@ -9,6 +9,7 @@ vi.mock("../api", async () => {
   return {
     ...actual,
     listEntries: vi.fn(),
+    getEntry: vi.fn(),
     getPassword: vi.fn(),
     deleteEntry: vi.fn(),
     lock: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("../api", async () => {
 });
 
 const listEntries = api.listEntries as unknown as ReturnType<typeof vi.fn>;
+const getEntry = api.getEntry as unknown as ReturnType<typeof vi.fn>;
 const getPassword = api.getPassword as unknown as ReturnType<typeof vi.fn>;
 const deleteEntry = api.deleteEntry as unknown as ReturnType<typeof vi.fn>;
 const lockMock = api.lock as unknown as ReturnType<typeof vi.fn>;
@@ -25,27 +27,50 @@ const entries = [
   { id: "2", title: "Example Bank", username: "someone", url: "https://bank.example.com" },
 ];
 
+const MASK = "••••••••••••";
+
 beforeEach(() => {
   listEntries.mockReset().mockResolvedValue(entries);
+  getEntry.mockReset().mockImplementation(async (id: string) => ({
+    ...entries.find((entry) => entry.id === id),
+    notes: "",
+    createdAt: "2026-09-12T10:00:00Z",
+    updatedAt: "2026-09-25T10:00:00Z",
+  }));
   getPassword.mockReset();
   deleteEntry.mockReset().mockResolvedValue(undefined);
   lockMock.mockReset().mockResolvedValue(undefined);
 });
+
+function entryList(): HTMLElement {
+  return screen.getByRole("list");
+}
+
+function detailsPanel(): HTMLElement {
+  return screen.getByRole("main", { name: "Login details" });
+}
 
 describe("VaultList", () => {
   it("lists every entry without ever showing a password", async () => {
     render(<VaultList onLocked={vi.fn()} />);
     expect(await screen.findByText("GitHub")).toBeInTheDocument();
     expect(screen.getByText("Example Bank")).toBeInTheDocument();
-    expect(screen.getAllByText("••••••••")).toHaveLength(2);
+    expect(within(entryList()).queryByText(/•/)).not.toBeInTheDocument();
+    expect(getPassword).not.toHaveBeenCalled();
   });
 
-  it("filters the list by search text", async () => {
+  it("filters the list by search text, including the URL", async () => {
     const user = userEvent.setup();
     render(<VaultList onLocked={vi.fn()} />);
     await screen.findByText("GitHub");
 
-    await user.type(screen.getByPlaceholderText("Search…"), "bank");
+    const search = screen.getByPlaceholderText("Search logins");
+    await user.type(search, "bank");
+    expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
+    expect(screen.getByText("Example Bank")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "bank.example");
     expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
     expect(screen.getByText("Example Bank")).toBeInTheDocument();
   });
@@ -58,14 +83,19 @@ describe("VaultList", () => {
       render(<VaultList onLocked={vi.fn()} />);
       await screen.findByText("GitHub");
 
-      const githubRow = screen.getByText("GitHub").closest("li") as HTMLElement;
-      await user.click(within(githubRow).getByRole("button", { name: "Reveal" }));
+      await user.click(within(entryList()).getByRole("button", { name: /GitHub/ }));
+      const details = detailsPanel();
+      expect(within(details).getByText(MASK)).toBeInTheDocument();
+      expect(getPassword).not.toHaveBeenCalled();
 
-      expect(await within(githubRow).findByText("hunter2")).toBeInTheDocument();
+      await user.click(within(details).getByRole("button", { name: "Show password" }));
+      expect(await within(details).findByText("hunter2")).toBeInTheDocument();
       expect(getPassword).toHaveBeenCalledWith("1");
+      expect(within(details).getByRole("button", { name: "Hide password" })).toBeInTheDocument();
 
       await vi.advanceTimersByTimeAsync(30_000);
-      await waitFor(() => expect(within(githubRow).getByText("••••••••")).toBeInTheDocument());
+      await waitFor(() => expect(within(details).getByText(MASK)).toBeInTheDocument());
+      expect(within(details).queryByText("hunter2")).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
@@ -77,13 +107,14 @@ describe("VaultList", () => {
     render(<VaultList onLocked={vi.fn()} />);
     await screen.findByText("GitHub");
 
-    const githubRow = screen.getByText("GitHub").closest("li") as HTMLElement;
-    await user.click(within(githubRow).getByRole("button", { name: "Delete" }));
+    await user.click(within(entryList()).getByRole("button", { name: /GitHub/ }));
+    const details = detailsPanel();
+    await user.click(within(details).getByRole("button", { name: "Delete login" }));
     expect(confirmSpy).toHaveBeenCalledWith('Delete "GitHub"? This cannot be undone.');
     expect(deleteEntry).not.toHaveBeenCalled();
 
     confirmSpy.mockReturnValue(true);
-    await user.click(within(githubRow).getByRole("button", { name: "Delete" }));
+    await user.click(within(details).getByRole("button", { name: "Delete login" }));
     await waitFor(() => expect(deleteEntry).toHaveBeenCalledWith("1"));
 
     confirmSpy.mockRestore();
@@ -95,7 +126,26 @@ describe("VaultList", () => {
     render(<VaultList onLocked={onLocked} />);
     await screen.findByText("GitHub");
 
-    await user.click(screen.getByRole("button", { name: "Lock" }));
+    await user.click(screen.getByRole("button", { name: "Lock vault" }));
+    await waitFor(() => expect(lockMock).toHaveBeenCalledTimes(1));
+    expect(onLocked).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports Ctrl+F to search, Esc to close the editor, and Ctrl+L to lock", async () => {
+    const onLocked = vi.fn();
+    const user = userEvent.setup();
+    render(<VaultList onLocked={onLocked} />);
+    await screen.findByText("GitHub");
+
+    await user.keyboard("{Control>}f{/Control}");
+    expect(screen.getByPlaceholderText("Search logins")).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "Add login" }));
+    expect(screen.getByRole("heading", { name: "Add login" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("heading", { name: "Add login" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Control>}l{/Control}");
     await waitFor(() => expect(lockMock).toHaveBeenCalledTimes(1));
     expect(onLocked).toHaveBeenCalledTimes(1);
   });

@@ -49,3 +49,15 @@ export function checkNewMasterPassword(password: string): MasterPasswordCheck {
   }
   return { ok: true };
 }
+
+/** The same two rules as `checkNewMasterPassword`, each reported on its own. */
+export function masterPasswordRules(password: string): {
+  longEnough: boolean;
+  noControlCharacters: boolean;
+} {
+  const normalized = normalizeMasterPassword(password);
+  return {
+    longEnough: countChars(normalized) >= MIN_MASTER_PASSWORD_CHARS,
+    noControlCharacters: !CONTROL_CHARACTER.test(normalized),
+  };
+}

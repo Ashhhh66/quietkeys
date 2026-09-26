@@ -1,1 +1,185 @@
 @import "tailwindcss";
+
+/* Theme tokens. Components use the Tailwind utilities mapped below, never raw values. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0f1214;
+  --sidebar: #0b0d0f;
+  --sidebar-border: #1e2428;
+  --card: #151a1d;
+  --card-border: #232a2f;
+  --text: #e6eaec;
+  --text-soft: #c9d0d4;
+  --muted: #98a2a9;
+  --label: #8a959c;
+  --nav-text: #b3bcc2;
+  --nav-active-bg: #172024;
+  --input-bg: #151a1d;
+  --input-bg-field: #0f1214;
+  --input-border: #2a3237;
+  --kbd-border: #2a3237;
+  --lock-bg: #12171a;
+  --lock-border: #262d32;
+  --row-selected-bg: #172a2a;
+  --row-selected-border: #24433f;
+  --icon-button: #b3bcc2;
+  --danger-bg: #1a1415;
+  --danger-border: #3a2a2c;
+  --danger-fg: #f0a8a0;
+  --error-bg: #221617;
+  --error-border: #45292b;
+  --error-fg: #f4b5ad;
+  --warn-bg: #241f14;
+  --warn-border: #463b22;
+  --warn-fg: #ebcb8b;
+  --badge-bg: #2a2417;
+  --badge-fg: #e8c27a;
+  --ok-bg: #1b3a35;
+  --ok-fg: #45c4ae;
+  --disabled-bg: #232a2f;
+  --disabled-fg: #8a959c;
+  --accent: #45c4ae;
+  --on-accent: #06201c;
+  --accent-text: #45c4ae;
+  --switch-off: #3a4449;
+  --switch-knob: #ffffff;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f6f7f5;
+  --sidebar: #eef0ed;
+  --sidebar-border: #dde2de;
+  --card: #ffffff;
+  --card-border: #e1e5e2;
+  --text: #15191b;
+  --text-soft: #323a3f;
+  --muted: #5b666c;
+  --label: #5f6b72;
+  --nav-text: #3a4449;
+  --nav-active-bg: #e0e6e2;
+  --input-bg: #ffffff;
+  --input-bg-field: #f6f7f5;
+  --input-border: #d5dbd7;
+  --kbd-border: #cdd4d0;
+  --lock-bg: #ffffff;
+  --lock-border: #d5dbd7;
+  --row-selected-bg: #e2f3ee;
+  --row-selected-border: #bce3d8;
+  --icon-button: #4a555b;
+  --danger-bg: #fdf0ee;
+  --danger-border: #f0cfcb;
+  --danger-fg: #b0352a;
+  --error-bg: #fdeeec;
+  --error-border: #f2c9c4;
+  --error-fg: #9e2f24;
+  --warn-bg: #fbf3e1;
+  --warn-border: #eed9a8;
+  --warn-fg: #744f00;
+  --badge-bg: #fbf1dc;
+  --badge-fg: #7f5400;
+  --ok-bg: #d6f0ea;
+  --ok-fg: #0f6e5f;
+  --disabled-bg: #e4e8e5;
+  --disabled-fg: #5f6b72;
+  --accent: #45c4ae;
+  --on-accent: #06201c;
+  --accent-text: #267064;
+  --switch-off: #3a4449;
+  --switch-knob: #ffffff;
+}
+
+:root {
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, black);
+  --danger-bg-hover: color-mix(in srgb, var(--danger-bg) 88%, var(--danger-fg));
+}
+
+@theme inline {
+  --font-sans: "Instrument Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-page: var(--page);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-card: var(--card);
+  --color-card-border: var(--card-border);
+  --color-text: var(--text);
+  --color-text-soft: var(--text-soft);
+  --color-muted: var(--muted);
+  --color-label: var(--label);
+  --color-nav-text: var(--nav-text);
+  --color-nav-active-bg: var(--nav-active-bg);
+  --color-input-bg: var(--input-bg);
+  --color-input-bg-field: var(--input-bg-field);
+  --color-input-border: var(--input-border);
+  --color-kbd-border: var(--kbd-border);
+  --color-lock-bg: var(--lock-bg);
+  --color-lock-border: var(--lock-border);
+  --color-row-selected-bg: var(--row-selected-bg);
+  --color-row-selected-border: var(--row-selected-border);
+  --color-icon-button: var(--icon-button);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-bg-hover: var(--danger-bg-hover);
+  --color-danger-border: var(--danger-border);
+  --color-danger-fg: var(--danger-fg);
+  --color-error-bg: var(--error-bg);
+  --color-error-border: var(--error-border);
+  --color-error-fg: var(--error-fg);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-border: var(--warn-border);
+  --color-warn-fg: var(--warn-fg);
+  --color-badge-bg: var(--badge-bg);
+  --color-badge-fg: var(--badge-fg);
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-fg: var(--ok-fg);
+  --color-disabled-bg: var(--disabled-bg);
+  --color-disabled-fg: var(--disabled-fg);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
+  --color-accent-text: var(--accent-text);
+  --color-switch-off: var(--switch-off);
+  --color-switch-knob: var(--switch-knob);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-page);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  button,
+  a,
+  input,
+  textarea {
+    transition-property: background-color, color;
+    transition-duration: 130ms;
+    transition-timing-function: ease-out;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

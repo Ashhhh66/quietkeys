@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>quietkeys preview</title>
+    <script>
+      (function () {
+        var q = new URLSearchParams(location.search);
+        var screen = q.get("screen") || "vault";
+        document.documentElement.setAttribute("data-theme", q.get("theme") || "dark");
+        var entries = [
+          { id: "1", title: "GitHub", username: "octocat@example.com", url: "https://github.com" },
+          { id: "2", title: "Example Bank", username: "someone", url: "https://bank.example.com" },
+          { id: "3", title: "Figma", username: "design@studio.io", url: "https://www.figma.com" },
+          { id: "4", title: "Home Wi-Fi", username: "", url: "" },
+          { id: "5", title: "Proton Mail", username: "me@proton.me", url: "https://proton.me" },
+          { id: "6", title: "Amazon", username: "shopper", url: "https://amazon.co.uk" },
+        ];
+        window.__TAURI_INTERNALS__ = {
+          invoke: function (cmd, args) {
+            switch (cmd) {
+              case "vault_exists":
+                return Promise.resolve(screen !== "setup");
+              case "is_unlocked":
+                return Promise.resolve(screen === "vault");
+              case "list_entries":
+                return Promise.resolve(q.get("empty") ? [] : entries);
+              case "get_entry":
+                var e = entries.find(function (x) {
+                  return x.id === args.id;
+                });
+                return Promise.resolve(
+                  Object.assign({}, e, {
+                    notes: e.id === "1" ? "Recovery codes are in the safe.\nSecond line." : "",
+                    createdAt: "2026-09-12T10:00:00Z",
+                    updatedAt: "2026-09-25T10:00:00Z",
+                  }),
+                );
+              case "get_password":
+                return Promise.resolve("correct-horse-battery-staple");
+              case "unlock":
+                return Promise.reject(
+                  q.get("throttle")
+                    ? { kind: "throttled", message: "x", secondsRemaining: 8 }
+                    : { kind: "decrypt_failed", message: "Incorrect password or corrupted vault" },
+                );
+              default:
+                return Promise.resolve(null);
+            }
+          },
+        };
+        function clickLater(selector, ms) {
+          setTimeout(function () {
+            var el = document.querySelector(selector);
+            if (el) el.click();
+          }, ms);
+        }
+        if (q.get("select")) clickLater("ul li:first-child button", 600);
+        if (q.get("reveal")) clickLater("button[aria-label='Show password']", 1200);
+        if (q.get("add")) clickLater("button[aria-label='Add login']", 600);
+        if (q.get("submit")) {
+          setTimeout(function () {
+            var input = document.querySelector("input[type='password']");
+            if (input) {
+              var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+              setter.call(input, q.get("submit"));
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+              if (q.get("confirm") !== null) {
+                var c = document.querySelector("#confirm-password");
+                setter.call(c, q.get("confirm"));
+                c.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+              if (screen === "unlock") document.querySelector("button[type='submit']").click();
+            }
+          }, 600);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

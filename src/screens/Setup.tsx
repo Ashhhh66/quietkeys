@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
+import { AlertCircle, Check, KeyRound, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { createVault, isApiError } from "../api";
-import { checkNewMasterPassword } from "../masterPassword";
+import AuthCard, { ALERT, FIELD_INPUT, FIELD_LABEL, PRIMARY_BUTTON } from "../components/AuthCard";
+import { checkNewMasterPassword, masterPasswordRules } from "../masterPassword";
 
 interface Props {
   onCreated: () => void;
@@ -13,9 +15,9 @@ export default function Setup({ onCreated }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const check = checkNewMasterPassword(password);
-  const showFeedback = password.length > 0 && !check.ok;
-  const mismatch = password.length > 0 && confirm.length > 0 && password !== confirm;
-  const canSubmit = check.ok && confirm.length > 0 && !mismatch && !submitting;
+  const rules = masterPasswordRules(password);
+  const passwordsMatch = confirm.length > 0 && password === confirm;
+  const canSubmit = check.ok && passwordsMatch && !submitting;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -38,26 +40,35 @@ export default function Setup({ onCreated }: Props) {
   }
 
   return (
-    <main className="flex h-screen items-center justify-center bg-slate-900 text-slate-100">
-      <form onSubmit={handleSubmit} className="w-80 space-y-4">
-        <h1 className="text-xl font-semibold">Create your vault</h1>
-        <div>
-          <label className="mb-1 block text-sm" htmlFor="master-password">
+    <AuthCard width="wide">
+      <div className="flex flex-col gap-3">
+        <span className="flex size-11 items-center justify-center rounded-xl bg-accent text-on-accent">
+          <KeyRound size={22} strokeWidth={2} aria-hidden />
+        </span>
+        <h1 className="text-[24px] font-semibold">Create your vault</h1>
+        <p className="text-[14.5px] leading-normal text-muted">
+          Choose a master password. It unlocks everything, so make it long and memorable.
+        </p>
+      </div>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-[22px]">
+        <div className="flex flex-col gap-2">
+          <label className={FIELD_LABEL} htmlFor="master-password">
             Master password
           </label>
           <input
             id="master-password"
             type="password"
             autoComplete="new-password"
+            autoFocus
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onContextMenu={(e) => e.preventDefault()}
-            className="w-full rounded bg-slate-800 px-3 py-2 select-none"
+            className={FIELD_INPUT}
           />
         </div>
-        <div>
-          <label className="mb-1 block text-sm" htmlFor="confirm-password">
-            Confirm password
+        <div className="flex flex-col gap-2">
+          <label className={FIELD_LABEL} htmlFor="confirm-password">
+            Confirm master password
           </label>
           <input
             id="confirm-password"
@@ -66,20 +77,51 @@ export default function Setup({ onCreated }: Props) {
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             onContextMenu={(e) => e.preventDefault()}
-            className="w-full rounded bg-slate-800 px-3 py-2 select-none"
+            className={FIELD_INPUT}
           />
         </div>
-        {showFeedback && <p className="text-sm text-amber-400">{check.message}</p>}
-        {mismatch && <p className="text-sm text-amber-400">Passwords do not match.</p>}
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="w-full rounded bg-sky-600 py-2 disabled:opacity-50"
-        >
+        <ul aria-label="Password requirements" className="flex flex-col gap-2 text-[13.5px]">
+          <ChecklistItem met={rules.longEnough}>At least 12 characters</ChecklistItem>
+          <ChecklistItem met={password.length > 0 && rules.noControlCharacters}>
+            No hidden control characters
+          </ChecklistItem>
+          <ChecklistItem met={passwordsMatch}>Passwords match</ChecklistItem>
+        </ul>
+        <p className={`${ALERT} border-warn-border bg-warn-bg text-[13px] text-warn-fg`}>
+          <TriangleAlert size={16} strokeWidth={2} aria-hidden className="mt-px shrink-0" />
+          There is no password reset. If you forget your master password, your vault can&apos;t be
+          recovered.
+        </p>
+        {error && (
+          <p role="alert" className={`${ALERT} border-error-border bg-error-bg text-error-fg`}>
+            <AlertCircle size={16} strokeWidth={2} aria-hidden className="mt-px shrink-0" />
+            {error}
+          </p>
+        )}
+        <button type="submit" disabled={!canSubmit} className={PRIMARY_BUTTON}>
+          {submitting && (
+            <LoaderCircle size={18} strokeWidth={2} aria-hidden className="animate-spin" />
+          )}
           {submitting ? "Creating…" : "Create vault"}
         </button>
       </form>
-    </main>
+    </AuthCard>
+  );
+}
+
+function ChecklistItem({ met, children }: { met: boolean; children: string }) {
+  return (
+    <li className={`flex items-center gap-2.5 ${met ? "text-text-soft" : "text-muted"}`}>
+      <span
+        aria-hidden
+        className={`flex size-5 shrink-0 items-center justify-center rounded-full ${
+          met ? "bg-ok-bg text-ok-fg" : "bg-disabled-bg text-muted"
+        }`}
+      >
+        {met ? <Check size={14} strokeWidth={2} /> : <X size={14} strokeWidth={2} />}
+      </span>
+      <span className="sr-only">{met ? "Met:" : "Not met:"}</span>
+      <span>{children}</span>
+    </li>
   );
 }

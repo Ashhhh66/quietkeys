@@ -47,7 +47,9 @@ describe("Unlock", () => {
     await user.type(input, "wrong password");
     await user.click(screen.getByRole("button", { name: "Unlock" }));
 
-    expect(await screen.findByText("Incorrect password or corrupted vault")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Incorrect password or corrupted vault.",
+    );
     expect(input).toHaveValue("");
   });
 
@@ -69,11 +71,19 @@ describe("Unlock", () => {
       const button = () => screen.getByRole("button");
       await waitFor(() => expect(button()).toHaveTextContent("Try again in 5s"));
       expect(button()).toBeDisabled();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Too many attempts. You can try again in 5 seconds.",
+      );
 
       await vi.advanceTimersByTimeAsync(3000);
       expect(button()).toHaveTextContent("Try again in 2s");
 
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(1000);
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent("You can try again in 1 second."),
+      );
+
+      await vi.advanceTimersByTimeAsync(1000);
       await waitFor(() => expect(button()).toHaveTextContent("Unlock"));
       expect(button()).toBeEnabled();
     } finally {
