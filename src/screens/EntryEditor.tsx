@@ -132,69 +132,76 @@ export default function EntryEditor({ id, onDone }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-6 px-10 py-8">
-      <h2 className="text-[26px] font-semibold tracking-[-0.015em]">
-        {id === null ? "Add login" : "Edit login"}
-      </h2>
-      <div className="divide-y divide-card-border rounded-[14px] border border-card-border bg-card">
-        <Field label="Title" value={title} max={MAX_TITLE_CHARS} onChange={setTitle} autoFocus />
-        <Field label="Username" value={username} max={MAX_USERNAME_CHARS} onChange={setUsername} />
-        <div className="px-5 py-4">
-          <label className={`${LABEL} mb-2`} htmlFor={passwordId}>
-            Password
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id={passwordId}
-              type={passwordVisible ? "text" : "password"}
-              value={password}
-              placeholder={id === null ? "" : "(unchanged — reveal to view or edit)"}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setPasswordTouched(true);
-              }}
-              onContextMenu={(e) => e.preventDefault()}
-              className={`${INPUT} h-10 font-mono select-none placeholder:font-sans placeholder:text-muted`}
-            />
-            <button
-              type="button"
-              onClick={handleReveal}
-              aria-label={passwordVisible ? "Hide password" : "Show password"}
-              className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-icon-button hover:bg-nav-active-bg/60"
-            >
-              {passwordVisible ? (
-                <EyeOff size={17} strokeWidth={2} aria-hidden />
-              ) : (
-                <Eye size={17} strokeWidth={2} aria-hidden />
-              )}
-            </button>
+    <form onSubmit={handleSubmit} className="flex min-h-full flex-col">
+      <div className="flex flex-col gap-6 px-10 pt-8 pb-4">
+        <h2 className="text-[26px] font-semibold tracking-[-0.015em]">
+          {id === null ? "Add login" : "Edit login"}
+        </h2>
+        <div className="divide-y divide-card-border rounded-[14px] border border-card-border bg-card">
+          <Field label="Title" value={title} max={MAX_TITLE_CHARS} onChange={setTitle} autoFocus />
+          <Field
+            label="Username"
+            value={username}
+            max={MAX_USERNAME_CHARS}
+            onChange={setUsername}
+          />
+          <div className="px-5 py-4">
+            <label className={`${LABEL} mb-2`} htmlFor={passwordId}>
+              Password
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id={passwordId}
+                type={passwordVisible ? "text" : "password"}
+                value={password}
+                placeholder={id === null ? "" : "(unchanged — reveal to view or edit)"}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setPasswordTouched(true);
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className={`${INPUT} h-10 font-mono select-none placeholder:font-sans placeholder:text-muted`}
+              />
+              <button
+                type="button"
+                onClick={handleReveal}
+                aria-label={passwordVisible ? "Hide password" : "Show password"}
+                className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-icon-button hover:bg-nav-active-bg/60"
+              >
+                {passwordVisible ? (
+                  <EyeOff size={17} strokeWidth={2} aria-hidden />
+                ) : (
+                  <Eye size={17} strokeWidth={2} aria-hidden />
+                )}
+              </button>
+            </div>
+            <Counter value={password} max={MAX_PASSWORD_CHARS} />
           </div>
-          <Counter value={password} max={MAX_PASSWORD_CHARS} />
+          <Field label="Website" value={url} max={MAX_URL_CHARS} onChange={setUrl} />
         </div>
-        <Field label="Website" value={url} max={MAX_URL_CHARS} onChange={setUrl} />
+        <div className="rounded-[14px] border border-card-border bg-card px-5 py-4">
+          <label className={`${LABEL} mb-2`} htmlFor={notesId}>
+            Notes
+          </label>
+          <textarea
+            id={notesId}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={5}
+            className={`${INPUT} py-2.5 text-[14.5px] leading-[1.55]`}
+          />
+          <Counter value={notes} max={MAX_NOTES_CHARS} />
+        </div>
+        {error && (
+          <p
+            role="alert"
+            className="rounded-[10px] border border-error-border bg-error-bg px-3.5 py-3 text-[13.5px] text-error-fg"
+          >
+            {error}
+          </p>
+        )}
       </div>
-      <div className="rounded-[14px] border border-card-border bg-card px-5 py-4">
-        <label className={`${LABEL} mb-2`} htmlFor={notesId}>
-          Notes
-        </label>
-        <textarea
-          id={notesId}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={5}
-          className={`${INPUT} py-2.5 text-[14.5px] leading-[1.55]`}
-        />
-        <Counter value={notes} max={MAX_NOTES_CHARS} />
-      </div>
-      {error && (
-        <p
-          role="alert"
-          className="rounded-[10px] border border-error-border bg-error-bg px-3.5 py-3 text-[13.5px] text-error-fg"
-        >
-          {error}
-        </p>
-      )}
-      <div className="flex gap-2">
+      <div className="sticky bottom-0 mt-auto flex gap-2 border-t border-card-border bg-page px-10 py-4">
         <button
           type="submit"
           disabled={saving}

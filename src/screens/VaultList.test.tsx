@@ -42,8 +42,8 @@ beforeEach(() => {
   lockMock.mockReset().mockResolvedValue(undefined);
 });
 
-function entryList(): HTMLElement {
-  return screen.getByRole("list");
+function entryList(): Promise<HTMLElement> {
+  return screen.findByRole("list");
 }
 
 function detailsPanel(): HTMLElement {
@@ -53,26 +53,30 @@ function detailsPanel(): HTMLElement {
 describe("VaultList", () => {
   it("lists every entry without ever showing a password", async () => {
     render(<VaultList onLocked={vi.fn()} />);
-    expect(await screen.findByText("GitHub")).toBeInTheDocument();
-    expect(screen.getByText("Example Bank")).toBeInTheDocument();
-    expect(within(entryList()).queryByText(/•/)).not.toBeInTheDocument();
+    expect(await within(await entryList()).findByText("GitHub")).toBeInTheDocument();
+    expect(within(await entryList()).getByText("Example Bank")).toBeInTheDocument();
+    expect(within(detailsPanel()).getByRole("heading", { name: "GitHub" })).toBeInTheDocument();
+    expect(within(await entryList()).queryByText(/•/)).not.toBeInTheDocument();
     expect(getPassword).not.toHaveBeenCalled();
   });
 
   it("filters the list by search text, including the URL", async () => {
     const user = userEvent.setup();
     render(<VaultList onLocked={vi.fn()} />);
-    await screen.findByText("GitHub");
+    await within(await entryList()).findByText("GitHub");
 
     const search = screen.getByPlaceholderText("Search logins");
     await user.type(search, "bank");
-    expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
-    expect(screen.getByText("Example Bank")).toBeInTheDocument();
+    expect(within(await entryList()).queryByText("GitHub")).not.toBeInTheDocument();
+    expect(within(await entryList()).getByText("Example Bank")).toBeInTheDocument();
+    expect(
+      within(detailsPanel()).getByRole("heading", { name: "Example Bank" }),
+    ).toBeInTheDocument();
 
     await user.clear(search);
     await user.type(search, "bank.example");
-    expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
-    expect(screen.getByText("Example Bank")).toBeInTheDocument();
+    expect(within(await entryList()).queryByText("GitHub")).not.toBeInTheDocument();
+    expect(within(await entryList()).getByText("Example Bank")).toBeInTheDocument();
   });
 
   it("reveals a password on demand and hides it again after 30 seconds", async () => {
@@ -81,9 +85,9 @@ describe("VaultList", () => {
       getPassword.mockResolvedValue("hunter2");
       const user = userEvent.setup({ delay: null });
       render(<VaultList onLocked={vi.fn()} />);
-      await screen.findByText("GitHub");
+      await within(await entryList()).findByText("GitHub");
 
-      await user.click(within(entryList()).getByRole("button", { name: /GitHub/ }));
+      await user.click(within(await entryList()).getByRole("button", { name: /GitHub/ }));
       const details = detailsPanel();
       expect(within(details).getByText(MASK)).toBeInTheDocument();
       expect(getPassword).not.toHaveBeenCalled();
@@ -105,9 +109,9 @@ describe("VaultList", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const user = userEvent.setup();
     render(<VaultList onLocked={vi.fn()} />);
-    await screen.findByText("GitHub");
+    await within(await entryList()).findByText("GitHub");
 
-    await user.click(within(entryList()).getByRole("button", { name: /GitHub/ }));
+    await user.click(within(await entryList()).getByRole("button", { name: /GitHub/ }));
     const details = detailsPanel();
     await user.click(within(details).getByRole("button", { name: "Delete login" }));
     expect(confirmSpy).toHaveBeenCalledWith('Delete "GitHub"? This cannot be undone.');
@@ -124,7 +128,7 @@ describe("VaultList", () => {
     const onLocked = vi.fn();
     const user = userEvent.setup();
     render(<VaultList onLocked={onLocked} />);
-    await screen.findByText("GitHub");
+    await within(await entryList()).findByText("GitHub");
 
     await user.click(screen.getByRole("button", { name: "Lock vault" }));
     await waitFor(() => expect(lockMock).toHaveBeenCalledTimes(1));
@@ -135,7 +139,7 @@ describe("VaultList", () => {
     const onLocked = vi.fn();
     const user = userEvent.setup();
     render(<VaultList onLocked={onLocked} />);
-    await screen.findByText("GitHub");
+    await within(await entryList()).findByText("GitHub");
 
     await user.keyboard("{Control>}f{/Control}");
     expect(screen.getByPlaceholderText("Search logins")).toHaveFocus();

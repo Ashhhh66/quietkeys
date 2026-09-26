@@ -161,6 +161,15 @@
     outline-offset: 2px;
   }
 
+  /* A wrong master password turns the field border, and its focus ring, to the error colour. */
+  input[aria-invalid="true"] {
+    border-color: var(--error-fg);
+  }
+
+  input[aria-invalid="true"]:focus-visible {
+    outline-color: var(--error-fg);
+  }
+
   button,
   a,
   input,

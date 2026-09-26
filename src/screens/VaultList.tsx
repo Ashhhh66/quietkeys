@@ -125,7 +125,12 @@ export default function VaultList({ onLocked }: Props) {
       entry.username.toLowerCase().includes(query) ||
       entry.url.toLowerCase().includes(query),
   );
-  const selected = filtered.find((entry) => entry.id === selectedId) ?? null;
+  // Keep an explicit choice when it is still in the list. Otherwise show the first
+  // visible login, so the details panel is filled as soon as the vault has entries.
+  const selected =
+    filtered.find((entry) => entry.id === selectedId) ??
+    (editing === null ? (filtered[0] ?? null) : null);
+  const highlightedId = editing === "new" ? null : (editing ?? selected?.id ?? null);
 
   let details: ReactNode;
   if (editing !== null) {
@@ -151,12 +156,6 @@ export default function VaultList({ onLocked }: Props) {
         onEdit={() => setEditing(selected.id)}
         onDelete={() => handleDelete(selected)}
       />
-    );
-  } else if (entries.length > 0) {
-    details = (
-      <div className="flex h-full items-center justify-center p-10">
-        <p className="text-[14px] text-muted">Select a login to see its details.</p>
-      </div>
     );
   }
 
@@ -273,7 +272,7 @@ export default function VaultList({ onLocked }: Props) {
         ) : (
           <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-4">
             {filtered.map((entry) => {
-              const isSelected = entry.id === selected?.id;
+              const isSelected = entry.id === highlightedId;
               return (
                 <li key={entry.id}>
                   <button
@@ -348,7 +347,15 @@ function NavItem({
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  // Day, then the locale's short month name, then the year: "12 Sep 2026".
+  const parts = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("day")} ${pick("month")} ${pick("year")}`;
 }
 
 function EntryPanel({
