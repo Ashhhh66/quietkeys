@@ -99,6 +99,7 @@ fn check_field_length(field: &'static str, value: &str, max_chars: usize) -> Res
 }
 
 /// One row of the entry list. Deliberately has no password or notes field.
+/// `updated_at` is a timestamp and `host` is the normalised website host, never a secret.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntrySummary {
@@ -106,6 +107,9 @@ pub struct EntrySummary {
     pub title: String,
     pub username: String,
     pub url: String,
+    pub updated_at: String,
+    /// Empty when the stored URL is not an address we would open.
+    pub host: String,
 }
 
 impl From<&Entry> for EntrySummary {
@@ -115,6 +119,8 @@ impl From<&Entry> for EntrySummary {
             title: entry.title.clone(),
             username: entry.username.clone(),
             url: entry.url.clone(),
+            updated_at: entry.updated_at.clone(),
+            host: crate::website::normalized_host(&entry.url).unwrap_or_default(),
         }
     }
 }
@@ -464,6 +470,27 @@ impl AppState {
         self.copy_to_clipboard(&username)
     }
 
+    /// Clears the clipboard only when it still holds the value quietkeys copied.
+    /// Does not need the vault to be unlocked.
+    pub fn clear_clipboard(&self) -> Result<()> {
+        let generation = *self.generation_guard();
+        if let Some(generation) = generation {
+            self.clipboard.clear_if_unchanged(generation)?;
+            let mut guard = self.generation_guard();
+            if *guard == Some(generation) {
+                *guard = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// The stored website for `id`, after it has passed [`crate::website::openable_website`].
+    /// The caller opens this string; the UI never supplies a URL.
+    pub fn entry_website_url(&self, id: &str) -> Result<String> {
+        let raw = self.with_vault(|vault, _| Ok(find(&vault.data, id)?.url.clone()))?;
+        Ok(crate::website::openable_website(&raw)?.to_string())
+    }
+
     fn copy_to_clipboard(&self, text: &str) -> Result<()> {
         let generation = self.clipboard.copy_concealed(text)?;
         *self.generation_guard() = Some(generation);
@@ -740,6 +767,10 @@ mod tests {
             ),
             ("copy_password", state.copy_password("any-id")),
             ("copy_username", state.copy_username("any-id")),
+            (
+                "entry_website_url",
+                state.entry_website_url("any-id").map(drop),
+            ),
         ]
     }
 
@@ -855,7 +886,50 @@ mod tests {
             .keys()
             .cloned()
             .collect();
-        assert_eq!(keys, ["id", "title", "url", "username"]);
+        assert_eq!(
+            keys,
+            ["host", "id", "title", "updatedAt", "url", "username"]
+        );
+    }
+
+    #[test]
+    fn list_entries_host_is_punycode_and_updated_at_is_not_a_secret() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let mut entry = input(1);
+        entry.url = "https://münchen.de/login".to_string();
+        state.add_entry(entry).unwrap();
+        let mut blocked = input(2);
+        blocked.url = "https://github.com@evil.example".to_string();
+        state.add_entry(blocked).unwrap();
+
+        let entries = state.list_entries().unwrap();
+        assert_eq!(entries[0].host, "xn--mnchen-3ya.de");
+        assert!(!entries[0].updated_at.is_empty());
+        assert!(entries[1].host.is_empty());
+        let json = serde_json::to_string(&entries).unwrap();
+        assert!(!json.contains("secret-password"));
+    }
+
+    #[test]
+    fn entry_website_url_reads_the_stored_address_and_refuses_the_rest() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let mut entry = input(1);
+        entry.url = "HTTPS://GitHub.com/login".to_string();
+        let added = state.add_entry(entry).unwrap();
+        assert_eq!(
+            state.entry_website_url(&added.id).unwrap(),
+            "https://github.com/login"
+        );
+
+        let mut blocked = input(2);
+        blocked.url = "https://github.com@evil.example".to_string();
+        let bad = state.add_entry(blocked).unwrap();
+        let err = state.entry_website_url(&bad.id).unwrap_err();
+        assert_eq!(err, VaultError::WebsiteNotOpened);
+        assert!(!err.to_string().contains("evil"));
+        assert!(!err.to_string().contains("github"));
     }
 
     #[test]
@@ -1676,6 +1750,31 @@ mod tests {
 
         state.lock();
         assert_eq!(clipboard.current(), 0);
+    }
+
+    #[test]
+    fn clear_clipboard_clears_only_while_the_change_counter_matches() {
+        let dir = TestDir::new();
+        let clipboard = Arc::new(clipboard::FakeClipboard::default());
+        let state = fast_unlocked_with(
+            &dir,
+            Arc::new(SystemClock),
+            Arc::clone(&clipboard) as Arc<dyn ConcealedClipboard>,
+        );
+        state.lock();
+
+        state.copy_generated_password("copied".to_string()).unwrap();
+        assert_ne!(clipboard.current(), 0);
+        state.clear_clipboard().unwrap();
+        assert_eq!(clipboard.current(), 0);
+
+        state.copy_generated_password("ours".to_string()).unwrap();
+        let ours = clipboard.current();
+        clipboard.copy_concealed("someone-else").unwrap();
+        let theirs = clipboard.current();
+        assert_ne!(ours, theirs);
+        state.clear_clipboard().unwrap();
+        assert_eq!(clipboard.current(), theirs);
     }
 
     #[test]

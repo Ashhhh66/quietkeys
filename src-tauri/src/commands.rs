@@ -3,6 +3,7 @@
 
 use secrecy::SecretString;
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::error::VaultError;
 use crate::generator::{self, PasswordOptions, PasswordScore};
@@ -167,6 +168,27 @@ pub async fn export_vault(app: AppHandle) -> CommandResult<()> {
         .into_path()
         .map_err(|_| VaultError::Io(std::io::ErrorKind::InvalidInput))?;
     app.state::<AppState>().export_vault(&path)
+}
+
+/// Clears the clipboard when its change counter still matches the last quietkeys copy.
+#[tauri::command]
+pub fn clear_clipboard(state: State<'_, AppState>) -> CommandResult<()> {
+    state.clear_clipboard()
+}
+
+/// Opens the entry's stored website. The UI sends the entry id, never a URL.
+/// The opener plugin is called from here; the webview has no opener permission.
+#[tauri::command]
+pub fn open_entry_website(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
+    let url = state.entry_website_url(&id)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|_| VaultError::WebsiteNotOpened)?;
+    Ok(())
 }
 
 fn suggested_export_name(now: time::OffsetDateTime) -> String {

@@ -19,6 +19,8 @@ const COMMANDS: &[&str] = &[
     "copy_generated_password",
     "restore_from_backup",
     "export_vault",
+    "clear_clipboard",
+    "open_entry_website",
 ];
 
 fn main() {

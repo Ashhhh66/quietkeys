@@ -15,10 +15,14 @@ export default function ClipboardToast({
   kind,
   startedAt,
   onExpire,
+  onClear,
+  clearError = null,
 }: {
   kind: ClipboardKind;
   startedAt: number;
   onExpire: () => void;
+  onClear: () => void;
+  clearError?: string | null;
 }) {
   const [now, setNow] = useState(startedAt);
   if (startedAt > now) setNow(startedAt);
@@ -43,7 +47,7 @@ export default function ClipboardToast({
   return (
     <div
       role="status"
-      className="clipboard-toast fixed right-3 bottom-3 z-40 flex h-[60px] max-w-[calc(100%-24px)] items-center gap-3 rounded-[16px] border border-toast-border bg-toast-bg px-3.5 text-text"
+      className="clipboard-toast fixed right-3 bottom-3 z-40 flex min-h-[60px] max-w-[calc(100%-24px)] items-center gap-3 rounded-[16px] border border-toast-border bg-toast-bg px-3.5 py-2 text-text"
     >
       <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden className="shrink-0 text-accent">
         <circle
@@ -84,7 +88,15 @@ export default function ClipboardToast({
         <span className="block text-[12.5px] text-muted">
           Clears from clipboard in {seconds}s · not in history
         </span>
+        {clearError && <span className="block text-[12.5px] text-error-fg">{clearError}</span>}
       </span>
+      <button
+        type="button"
+        onClick={onClear}
+        className="ml-auto shrink-0 rounded-[10px] border border-panel-border px-2.5 py-1.5 text-[12.5px] font-medium text-text hover:bg-nav-active-bg"
+      >
+        Clear now
+      </button>
     </div>
   );
 }

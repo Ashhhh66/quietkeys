@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The generator can copy its password. The copy stays out of clipboard history and clears after 30 seconds.
+- The command palette opens with Ctrl/Cmd+K. Enter copies a password and Shift+Enter copies a username, both through the concealed clipboard.
+- A copied password or username can be cleared immediately, and only while the clipboard still holds what quietkeys copied.
+- A login's website opens in the browser only when its stored address is http or https, has a host, and has no username or password. The details panel shows that host in its normalised form.
+- Settings can switch density and text size, and lists the keyboard shortcuts.
+- The login list can be sorted by recently changed.
 
 ### Changed
 

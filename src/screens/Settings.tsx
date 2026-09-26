@@ -1,6 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { LoaderCircle } from "lucide-react";
+import {
+  readDensity,
+  readTextSize,
+  setDensity,
+  setTextSize,
+  type Density,
+  type TextSize,
+} from "../appearance";
 import { changeMasterPassword, exportVault, friendlyMessage, isApiError } from "../api";
 import {
   AUTO_LOCK_CHOICES,
@@ -10,6 +18,7 @@ import {
 } from "../autoLock";
 import PasswordChecklist, { passwordChecklistPasses } from "../components/PasswordChecklist";
 import StrengthMeter from "../components/StrengthMeter";
+import ShortcutsDialog from "../components/ShortcutsDialog";
 import ThemeSwitch from "../components/ThemeSwitch";
 
 const LABEL = "block text-[12px] font-semibold tracking-[0.06em] text-label uppercase";
@@ -27,6 +36,9 @@ export default function Settings() {
   const [version, setVersion] = useState("");
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [density, setDensityChoice] = useState<Density>(readDensity);
+  const [textSize, setTextSizeChoice] = useState<TextSize>(readTextSize);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const canChange = passwordChecklistPasses(next, confirm) && current.length > 0 && !submitting;
 
@@ -164,6 +176,62 @@ export default function Settings() {
         <ThemeSwitch />
       </section>
 
+      <section className="flex max-w-[640px] flex-col gap-4 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+        <h3 className="text-[16px] font-semibold">Appearance</h3>
+        <fieldset className="flex flex-col gap-2">
+          <legend className={LABEL}>Density</legend>
+          {(
+            [
+              ["comfortable", "Comfortable"],
+              ["compact", "Compact"],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value} className="flex items-center gap-2 text-[14.5px] text-text">
+              <input
+                type="radio"
+                name="density"
+                checked={density === value}
+                onChange={() => {
+                  setDensity(value);
+                  setDensityChoice(value);
+                }}
+              />
+              {label}
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className="flex flex-col gap-2">
+          <legend className={LABEL}>Text size</legend>
+          {(
+            [
+              ["a", "A"],
+              ["a+", "A+"],
+              ["a++", "A++"],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value} className="flex items-center gap-2 text-[14.5px] text-text">
+              <input
+                type="radio"
+                name="text-size"
+                checked={textSize === value}
+                onChange={() => {
+                  setTextSize(value);
+                  setTextSizeChoice(value);
+                }}
+              />
+              {label}
+            </label>
+          ))}
+        </fieldset>
+        <button
+          type="button"
+          onClick={() => setShortcutsOpen(true)}
+          className="flex h-10 w-fit items-center rounded-[12px] border border-panel-border bg-panel px-4 text-[14px] font-medium text-text hover:bg-nav-active-bg"
+        >
+          Keyboard shortcuts
+        </button>
+      </section>
+
       <section className="flex max-w-[640px] flex-col gap-3 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
         <h3 className="text-[16px] font-semibold">Export backup</h3>
         <button
@@ -182,6 +250,7 @@ export default function Settings() {
       </section>
 
       {version && <p className="text-[13px] text-muted">Version {version}</p>}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
     </div>
   );
 }

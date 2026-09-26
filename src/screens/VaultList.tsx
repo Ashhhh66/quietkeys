@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Copy,
+  ExternalLink,
   KeyRound,
   List,
   Lock,
@@ -13,6 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import {
+  clearClipboard,
   copyPassword,
   copyUsername,
   deleteEntry,
@@ -22,12 +24,13 @@ import {
   isApiError,
   listEntries,
   lock as apiLock,
+  openEntryWebsite,
   type EntryDetails,
   type EntrySummary,
 } from "../api";
-import { domainOf } from "../avatar";
 import Avatar from "../components/Avatar";
 import ClipboardToast, { type ClipboardKind } from "../components/ClipboardToast";
+import CommandPalette from "../components/CommandPalette";
 import Kbd, { shortcutKeys, shortcutLabel } from "../components/Kbd";
 import { formatAutoLock, useIdleLock } from "../hooks/useIdleLock";
 import { usePasswordScore } from "../hooks/usePasswordScore";
@@ -43,8 +46,21 @@ interface Props {
 const REVEAL_DURATION_MS = 30_000;
 const PASSWORD_MASK = "•".repeat(12);
 
-type SortOrder = "added" | "name";
+type SortOrder = "added" | "name" | "changed";
 type ClipboardNotice = { kind: ClipboardKind; startedAt: number };
+
+function hasTextSelection(target: EventTarget | null): boolean {
+  if (
+    (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) &&
+    target.selectionStart !== null &&
+    target.selectionEnd !== null &&
+    target.selectionStart !== target.selectionEnd
+  ) {
+    return true;
+  }
+  const selection = window.getSelection();
+  return selection !== null && !selection.isCollapsed && selection.toString().length > 0;
+}
 
 export default function VaultList({ onLocked }: Props) {
   const [entries, setEntries] = useState<EntrySummary[]>([]);
@@ -60,6 +76,8 @@ export default function VaultList({ onLocked }: Props) {
   const [detailsVersion, setDetailsVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [clipboard, setClipboard] = useState<ClipboardNotice | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const remainingMs = useIdleLock(true, onLocked);
   const expireClipboard = useCallback(() => setClipboard(null), []);
@@ -119,10 +137,14 @@ export default function VaultList({ onLocked }: Props) {
       entry.username.toLowerCase().includes(query) ||
       entry.url.toLowerCase().includes(query),
   );
-  // "Date added" keeps the vault's stored order. A real "Recently changed" sort needs
-  // updated_at on the list, which Step 2 adds. That timestamp is not a secret.
+  // "Date added" keeps the vault's stored order. "Recently changed" uses updated_at,
+  // which is a timestamp and not a secret. Equal timestamps keep stored order.
   const sorted = [...filtered].sort((a, b) => {
     if (sort === "name") return a.title.localeCompare(b.title);
+    if (sort === "changed") {
+      const byDate = (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "");
+      if (byDate !== 0) return byDate;
+    }
     return (
       entries.findIndex((entry) => entry.id === a.id) -
       entries.findIndex((entry) => entry.id === b.id)
@@ -141,12 +163,49 @@ export default function VaultList({ onLocked }: Props) {
     function onKeyDown(e: KeyboardEvent) {
       const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
       const key = e.key.toLowerCase();
+      // A text selection, including one outside a field, must copy normally.
+      if (mod && (key === "c" || key === "b") && hasTextSelection(e.target)) return;
+      const inField =
+        e.target instanceof HTMLElement && Boolean(e.target.closest("input, textarea, select"));
+      if (inField && e.key !== "Escape") return;
+      if (paletteOpen) return;
       if (mod && key === "f") {
         e.preventDefault();
         focusSearch();
+      } else if (mod && key === "k") {
+        e.preventDefault();
+        setPaletteOpen(true);
       } else if (mod && key === "l") {
         e.preventDefault();
         void handleLock();
+      } else if (mod && key === "g") {
+        e.preventDefault();
+        if (editing !== null) setGeneratorOverEditor(true);
+        else {
+          setNav("generator");
+          setEditing(null);
+        }
+      } else if (mod && key === "n") {
+        e.preventDefault();
+        setEditing("new");
+        setGeneratorOverEditor(false);
+        setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
+      } else if (
+        mod &&
+        (key === "c" || key === "b") &&
+        nav === "all" &&
+        editing === null &&
+        highlightedId
+      ) {
+        e.preventDefault();
+        const copy = key === "c" ? copyPassword : copyUsername;
+        const kind: ClipboardKind = key === "c" ? "password" : "username";
+        void copy(highlightedId)
+          .then(() => {
+            setClearError(null);
+            setClipboard({ kind, startedAt: Date.now() });
+          })
+          .catch((err) => setError(friendlyMessage(err)));
       } else if (e.key === "Escape") {
         setEditing(null);
       } else if (
@@ -170,7 +229,7 @@ export default function VaultList({ onLocked }: Props) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [editing, focusSearch, handleLock, highlightedId, nav, sorted]);
+  }, [editing, focusSearch, handleLock, highlightedId, nav, paletteOpen, sorted]);
 
   async function handleDelete(entry: EntrySummary) {
     if (!window.confirm(`Delete "${entry.title}"? This cannot be undone.`)) return;
@@ -197,7 +256,33 @@ export default function VaultList({ onLocked }: Props) {
   }
 
   function noticeCopy(kind: ClipboardKind) {
+    setClearError(null);
     setClipboard({ kind, startedAt: Date.now() });
+  }
+
+  async function copyFromPalette(id: string, kind: ClipboardKind) {
+    try {
+      if (kind === "username") await copyUsername(id);
+      else await copyPassword(id);
+      noticeCopy(kind);
+      setPaletteOpen(false);
+    } catch (err) {
+      setError(friendlyMessage(err));
+    }
+  }
+
+  async function clearNow() {
+    try {
+      await clearClipboard();
+      setClearError(null);
+      setClipboard(null);
+    } catch (err) {
+      setClearError(friendlyMessage(err));
+    }
+  }
+
+  function openPalette() {
+    setPaletteOpen(true);
   }
 
   let details: ReactNode = null;
@@ -260,12 +345,13 @@ export default function VaultList({ onLocked }: Props) {
         </div>
         <button
           type="button"
-          onClick={focusSearch}
+          onClick={openPalette}
+          aria-keyshortcuts={shortcutKeys("K")}
           className="mb-3 flex h-10 w-full items-center gap-2 rounded-[12px] border border-panel-border bg-field px-3 text-left text-[14px] text-text-soft"
         >
           <Search size={16} strokeWidth={2} aria-hidden />
           <span className="flex-1">Search</span>
-          <Kbd>{shortcutLabel("F")}</Kbd>
+          <Kbd>{shortcutLabel("K")}</Kbd>
         </button>
         <nav aria-label="Vault" className="flex flex-col gap-1">
           <NavItem
@@ -385,6 +471,7 @@ export default function VaultList({ onLocked }: Props) {
                 >
                   <option value="added">Date added</option>
                   <option value="name">Name</option>
+                  <option value="changed">Recently changed</option>
                 </select>
               </label>
             </div>
@@ -464,6 +551,32 @@ export default function VaultList({ onLocked }: Props) {
           kind={clipboard.kind}
           startedAt={clipboard.startedAt}
           onExpire={expireClipboard}
+          onClear={() => void clearNow()}
+          clearError={clearError}
+        />
+      )}
+      {paletteOpen && (
+        <CommandPalette
+          entries={entries}
+          onCopyPassword={(id) => void copyFromPalette(id, "password")}
+          onCopyUsername={(id) => void copyFromPalette(id, "username")}
+          onGenerate={() => {
+            setPaletteOpen(false);
+            if (editing !== null) setGeneratorOverEditor(true);
+            else {
+              setNav("generator");
+              setEditing(null);
+            }
+          }}
+          onAdd={() => {
+            setPaletteOpen(false);
+            startNewEntry();
+          }}
+          onLock={() => {
+            setPaletteOpen(false);
+            void handleLock();
+          }}
+          onClose={() => setPaletteOpen(false)}
         />
       )}
     </div>
@@ -515,6 +628,7 @@ function EntryPanel({
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copiesSupported, setCopiesSupported] = useState(true);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
   const score = usePasswordScore(revealed ?? "");
 
   async function copy(which: ClipboardKind) {
@@ -568,8 +682,17 @@ function EntryPanel({
     }
   }
 
-  const domain = domainOf(entry.url);
+  const host = entry.host ?? "";
   const strength = score === null ? null : strengthLabel(score.score);
+
+  async function openSite() {
+    setOpenError(null);
+    try {
+      await openEntryWebsite(entry.id);
+    } catch (err) {
+      setOpenError(friendlyMessage(err));
+    }
+  }
 
   return (
     <div className="flex flex-col gap-5 px-8 py-7">
@@ -577,7 +700,21 @@ function EntryPanel({
         <Avatar title={entry.title} url={entry.url} size="lg" />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-[28px] font-semibold tracking-[-0.02em]">{entry.title}</h2>
-          {domain && <p className="truncate text-[14.5px] text-accent-text">{domain}</p>}
+          {host && (
+            <button
+              type="button"
+              onClick={() => void openSite()}
+              className="flex max-w-full items-center gap-1 truncate text-[14.5px] text-accent-text"
+            >
+              <span className="truncate">{host}</span>
+              <ExternalLink size={14} strokeWidth={2} aria-hidden />
+            </button>
+          )}
+          {openError && (
+            <p role="alert" className="text-[13px] text-error-fg">
+              {openError}
+            </p>
+          )}
         </div>
         <button
           type="button"
@@ -601,19 +738,25 @@ function EntryPanel({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
+            aria-label="Copy password"
+            aria-keyshortcuts={shortcutKeys("C")}
             onClick={() => void copy("password")}
             className="flex h-11 items-center gap-2 rounded-[12px] bg-accent-gradient px-4 text-[14.5px] font-semibold text-on-accent hover:opacity-95"
           >
             <Copy size={16} strokeWidth={2} aria-hidden />
             Copy password
+            <Kbd className="border-on-accent/30 text-on-accent">{shortcutLabel("C")}</Kbd>
           </button>
           <button
             type="button"
+            aria-label="Copy username"
+            aria-keyshortcuts={shortcutKeys("B")}
             onClick={() => void copy("username")}
             className="flex h-11 items-center gap-2 rounded-[12px] border border-panel-border bg-inset px-4 text-[14.5px] font-medium text-text hover:bg-nav-active-bg"
           >
             <Copy size={16} strokeWidth={2} aria-hidden />
             Copy username
+            <Kbd>{shortcutLabel("B")}</Kbd>
           </button>
         </div>
       )}

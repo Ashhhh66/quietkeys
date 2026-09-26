@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Copy, RefreshCw } from "lucide-react";
 import {
+  clearClipboard,
   copyGeneratedPassword,
   friendlyMessage,
   generatePassword,
@@ -34,6 +35,7 @@ export default function Generator({ onUse, onClose, onCopied }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [copiesSupported, setCopiesSupported] = useState(true);
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
   const expireCopy = useCallback(() => setCopiedAt(null), []);
 
   useEffect(() => {
@@ -72,6 +74,7 @@ export default function Generator({ onUse, onClose, onCopied }: Props) {
   async function copy() {
     try {
       await copyGeneratedPassword(password);
+      setClearError(null);
       if (onCopied) onCopied("password");
       else setCopiedAt(Date.now());
     } catch (err) {
@@ -81,6 +84,16 @@ export default function Generator({ onUse, onClose, onCopied }: Props) {
         return;
       }
       setError(friendlyMessage(err));
+    }
+  }
+
+  async function clearNow() {
+    try {
+      await clearClipboard();
+      setClearError(null);
+      setCopiedAt(null);
+    } catch (err) {
+      setClearError(friendlyMessage(err));
     }
   }
 
@@ -190,7 +203,13 @@ export default function Generator({ onUse, onClose, onCopied }: Props) {
         </div>
       </div>
       {copiedAt !== null && onCopied === undefined && (
-        <ClipboardToast kind="password" startedAt={copiedAt} onExpire={expireCopy} />
+        <ClipboardToast
+          kind="password"
+          startedAt={copiedAt}
+          onExpire={expireCopy}
+          onClear={() => void clearNow()}
+          clearError={clearError}
+        />
       )}
     </div>
   );

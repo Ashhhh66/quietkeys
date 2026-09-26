@@ -233,6 +233,57 @@
   }
 }
 
+.palette-panel {
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--page-solid) 65%, transparent);
+}
+
+/* Compact density shortens control heights and row padding by about 20%.
+   Text size is a separate root font-size scale, so these stay independent. */
+html[data-density="compact"] .h-8 {
+  height: 1.6rem;
+}
+html[data-density="compact"] .h-10 {
+  height: 2rem;
+}
+html[data-density="compact"] .h-11 {
+  height: 2.2rem;
+}
+html[data-density="compact"] .h-12 {
+  height: 2.4rem;
+}
+html[data-density="compact"] .size-10 {
+  width: 2rem;
+  height: 2rem;
+}
+html[data-density="compact"] .size-11 {
+  width: 2.2rem;
+  height: 2.2rem;
+}
+html[data-density="compact"] .py-2\.5 {
+  padding-block: 0.5rem;
+}
+html[data-density="compact"] .py-3 {
+  padding-block: 0.6rem;
+}
+html[data-density="compact"] .py-4 {
+  padding-block: 0.8rem;
+}
+html[data-density="compact"] .py-7 {
+  padding-block: 1.4rem;
+}
+html[data-density="compact"] .py-8 {
+  padding-block: 1.6rem;
+}
+html[data-density="compact"] .p-3 {
+  padding: 0.6rem;
+}
+html[data-density="compact"] .px-3 {
+  padding-inline: 0.6rem;
+}
+html[data-density="compact"] .gap-3 {
+  gap: 0.6rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

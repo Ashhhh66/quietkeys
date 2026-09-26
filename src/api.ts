@@ -17,6 +17,7 @@ export type ApiErrorKind =
   | "busy"
   | "already_unlocked"
   | "unsupported"
+  | "website_not_opened"
   | "invalid_generator_options"
   | "crypto"
   | "io";
@@ -76,6 +77,10 @@ export interface EntrySummary {
   title: string;
   username: string;
   url: string;
+  /** RFC3339 timestamp. Not a secret. */
+  updatedAt?: string;
+  /** Host as the url crate normalises it. Empty or omitted when the URL cannot be opened. */
+  host?: string;
 }
 
 /** Every entry field except the password. */
@@ -177,3 +182,9 @@ export const restoreFromBackup = (masterPassword: string): Promise<void> =>
 
 /** The save dialog runs in Rust. Cancel is a success and writes nothing. */
 export const exportVault = (): Promise<void> => call("export_vault");
+
+/** Clears the clipboard only when it still holds the last quietkeys copy. */
+export const clearClipboard = (): Promise<void> => call("clear_clipboard");
+
+/** Opens the entry's stored website. The UI sends the id, never a URL. */
+export const openEntryWebsite = (id: string): Promise<void> => call("open_entry_website", { id });

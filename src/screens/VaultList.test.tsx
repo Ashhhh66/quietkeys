@@ -15,6 +15,8 @@ vi.mock("../api", async () => {
     lock: vi.fn(),
     copyPassword: vi.fn(),
     copyUsername: vi.fn(),
+    clearClipboard: vi.fn(),
+    openEntryWebsite: vi.fn(),
     generatePassword: vi.fn(),
     scorePassword: vi.fn(),
   };
@@ -27,6 +29,8 @@ const deleteEntry = api.deleteEntry as unknown as ReturnType<typeof vi.fn>;
 const lockMock = api.lock as unknown as ReturnType<typeof vi.fn>;
 const copyPassword = api.copyPassword as unknown as ReturnType<typeof vi.fn>;
 const copyUsername = api.copyUsername as unknown as ReturnType<typeof vi.fn>;
+const clearClipboard = api.clearClipboard as unknown as ReturnType<typeof vi.fn>;
+const openEntryWebsite = api.openEntryWebsite as unknown as ReturnType<typeof vi.fn>;
 const generatePassword = api.generatePassword as unknown as ReturnType<typeof vi.fn>;
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
 
@@ -50,6 +54,8 @@ beforeEach(() => {
   lockMock.mockReset().mockResolvedValue(undefined);
   copyPassword.mockReset().mockResolvedValue(undefined);
   copyUsername.mockReset().mockResolvedValue(undefined);
+  clearClipboard.mockReset().mockResolvedValue(undefined);
+  openEntryWebsite.mockReset().mockResolvedValue(undefined);
   generatePassword.mockReset().mockResolvedValue("generated-secret");
   scorePassword.mockReset().mockResolvedValue({ score: 3, warning: null, suggestions: [] });
 });
@@ -229,5 +235,89 @@ describe("VaultList", () => {
       .map((button) => button.textContent);
     expect(titles[0]).toContain("Example Bank");
     expect(titles[1]).toContain("GitHub");
+  });
+
+  it("sorts recently changed entries by updated_at, newest first", async () => {
+    listEntries.mockResolvedValue([
+      { ...entries[0], updatedAt: "2020-01-01T00:00:00Z" },
+      { ...entries[1], updatedAt: "2026-06-01T00:00:00Z" },
+    ]);
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    const list = await entryList();
+    await within(list).findByText("GitHub");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort" }), "changed");
+    const titles = within(list)
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(titles[0]).toContain("Example Bank");
+    expect(titles[1]).toContain("GitHub");
+  });
+
+  it("shows the normalised host and opens the entry by id", async () => {
+    listEntries.mockResolvedValue([
+      {
+        id: "1",
+        title: "Stadt",
+        username: "a",
+        url: "https://münchen.de",
+        host: "xn--mnchen-3ya.de",
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    const open = await within(detailsPanel()).findByRole("button", { name: "xn--mnchen-3ya.de" });
+    expect(open).toHaveTextContent("xn--mnchen-3ya.de");
+    await user.click(open);
+    expect(openEntryWebsite).toHaveBeenCalledTimes(1);
+    expect(openEntryWebsite).toHaveBeenCalledWith("1");
+  });
+
+  it("does nothing for Ctrl+C and Ctrl+B when text is selected", async () => {
+    render(<VaultList onLocked={vi.fn()} />);
+    const heading = await within(detailsPanel()).findByRole("heading", { name: "GitHub" });
+    const range = document.createRange();
+    range.selectNodeContents(heading);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const copyEvent = new KeyboardEvent("keydown", {
+      key: "c",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(copyEvent);
+    expect(copyEvent.defaultPrevented).toBe(false);
+    expect(copyPassword).not.toHaveBeenCalled();
+
+    const usernameEvent = new KeyboardEvent("keydown", {
+      key: "b",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(usernameEvent);
+    expect(usernameEvent.defaultPrevented).toBe(false);
+    expect(copyUsername).not.toHaveBeenCalled();
+    selection?.removeAllRanges();
+  });
+
+  it("clears the clipboard from the toast, and keeps the toast when that fails", async () => {
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    await within(await entryList()).findByText("GitHub");
+    await user.click(within(detailsPanel()).getByRole("button", { name: "Copy password" }));
+    await user.click(screen.getByRole("button", { name: "Clear now" }));
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(clearClipboard).toHaveBeenCalledTimes(1);
+
+    clearClipboard.mockRejectedValue({ kind: "unsupported", message: "nope" });
+    await user.click(within(detailsPanel()).getByRole("button", { name: "Copy password" }));
+    await user.click(screen.getByRole("button", { name: "Clear now" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Copying isn't available on this system.");
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 });

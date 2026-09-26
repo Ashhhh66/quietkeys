@@ -82,4 +82,28 @@ describe("Settings", () => {
       expect(screen.getByLabelText("Confirm new password")).toHaveValue("");
     });
   });
+
+  it("applies density and text size immediately", async () => {
+    const user = userEvent.setup();
+    render(<Settings />);
+    await user.click(screen.getByRole("radio", { name: "Compact" }));
+    expect(document.documentElement.dataset.density).toBe("compact");
+    expect(localStorage.getItem("quietkeys.density")).toBe("compact");
+    await user.click(screen.getByRole("radio", { name: "A+" }));
+    expect(document.documentElement.style.fontSize).toBe("110%");
+    expect(localStorage.getItem("quietkeys.textSize")).toBe("a+");
+    delete document.documentElement.dataset.density;
+    document.documentElement.style.fontSize = "";
+    localStorage.removeItem("quietkeys.density");
+    localStorage.removeItem("quietkeys.textSize");
+  });
+
+  it("opens the keyboard shortcuts list", async () => {
+    const user = userEvent.setup();
+    render(<Settings />);
+    await user.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toHaveTextContent(
+      "Copy the selected password",
+    );
+  });
 });

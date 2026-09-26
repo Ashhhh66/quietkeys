@@ -25,6 +25,8 @@
     "allow-copy-generated-password",
     "allow-restore-from-backup",
     "allow-export-vault",
+    "allow-clear-clipboard",
+    "allow-open-entry-website",
     "dialog:allow-save",
     "core:app:default"
   ]
