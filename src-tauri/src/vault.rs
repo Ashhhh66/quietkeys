@@ -364,6 +364,59 @@ pub fn pre_restore_path(path: &Path) -> PathBuf {
 /// The backup is not updated here. [`change_master_password`] copies the new file over it
 /// immediately afterwards. A crash in between leaves the previous password able to open
 /// the backup until the next successful [`save`], which copies the current file over it.
+/// A new header and key, derived and not yet written. Dropping this wipes the key.
+pub(crate) struct PreparedMasterKey {
+    header: Header,
+    key: Key,
+}
+
+/// Derives the current password's key and decrypts the file. A mismatch is `DecryptFailed`.
+/// Does not take the in-memory vault, so it can run without holding that lock.
+pub(crate) fn verify_current_master_password(path: &Path, current: &SecretString) -> Result<()> {
+    let bytes = fs::read(path)?;
+    let file = parse_vault_file(&bytes)?;
+    let header = file.header();
+    let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
+    let derived = crypto::derive_key(current, &salt, &header.kdf_params())?;
+    decrypt_file(&file, &derived)?;
+    Ok(())
+}
+
+/// Derives a new salt and key for `new_password`. The caller has already checked the
+/// password rules. Does not read or write the vault.
+pub(crate) fn derive_new_master_key(
+    new_password: &SecretString,
+    params: KdfParams,
+) -> Result<PreparedMasterKey> {
+    let (header, key) = new_header_and_key(new_password, params)?;
+    Ok(PreparedMasterKey { header, key })
+}
+
+/// Encrypts the in-memory vault under `prepared`, writes it, and swaps the key.
+/// Does not touch the backup.
+pub(crate) fn write_rekeyed_vault(
+    vault: &mut UnlockedVault,
+    path: &Path,
+    prepared: PreparedMasterKey,
+) -> Result<()> {
+    let new_bytes = encrypt_to_file_bytes(&vault.data, &prepared.header, &prepared.key)?;
+    write_atomic(path, &new_bytes)?;
+    vault.header = prepared.header;
+    vault.key = prepared.key;
+    vault.upgrade = None;
+    Ok(())
+}
+
+/// Copies the current vault file over its backup when that file decrypts with the
+/// in-memory key. Same rule as [`save`].
+pub(crate) fn copy_vault_over_backup(vault: &UnlockedVault, path: &Path) -> Result<()> {
+    let current_bytes = fs::read(path)?;
+    if !is_good_vault(&current_bytes, &vault.key) {
+        return Err(VaultError::Crypto);
+    }
+    write_atomic(&backup_path(path), &current_bytes)
+}
+
 pub(crate) fn apply_new_master_key(
     vault: &mut UnlockedVault,
     path: &Path,
@@ -371,22 +424,10 @@ pub(crate) fn apply_new_master_key(
     new_password: &SecretString,
     params: KdfParams,
 ) -> Result<()> {
-    let bytes = fs::read(path)?;
-    let file = parse_vault_file(&bytes)?;
-    let header = file.header();
-    let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
-    let derived = crypto::derive_key(current, &salt, &header.kdf_params())?;
-    decrypt_file(&file, &derived)?;
-
+    verify_current_master_password(path, current)?;
     check_new_master_password(new_password)?;
-    let (header, key) = new_header_and_key(new_password, params)?;
-    let new_bytes = encrypt_to_file_bytes(&vault.data, &header, &key)?;
-    write_atomic(path, &new_bytes)?;
-
-    vault.header = header;
-    vault.key = key;
-    vault.upgrade = None;
-    Ok(())
+    let prepared = derive_new_master_key(new_password, params)?;
+    write_rekeyed_vault(vault, path, prepared)
 }
 
 /// [`apply_new_master_key`] with the default Argon2 parameters, then copies that new file
@@ -398,12 +439,7 @@ pub fn change_master_password(
     new_password: &SecretString,
 ) -> Result<()> {
     apply_new_master_key(vault, path, current, new_password, KdfParams::default())?;
-    let current_bytes = fs::read(path)?;
-    if !is_good_vault(&current_bytes, &vault.key) {
-        return Err(VaultError::Crypto);
-    }
-    write_atomic(&backup_path(path), &current_bytes)?;
-    Ok(())
+    copy_vault_over_backup(vault, path)
 }
 
 /// Copies the encrypted vault file to `dest`. Refuses to overwrite anything, including

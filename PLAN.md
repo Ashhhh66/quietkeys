@@ -259,6 +259,8 @@ The unlock throttle is held in memory and resets when the app restarts; it slows
 
 **Known limitation:** changing the master password writes the vault file first and then copies those bytes over `vault.quietkeys.bak`. A crash between the two leaves the old password able to open the backup until the next successful save, which copies the current file over the backup and retires the old password there too.
 
+**Known limitation:** If the app is force-closed within 30 seconds of copying, the clipboard is not cleared.
+
 ## 7b. Git hygiene
 
 - `.gitignore` must exclude `*.quietkeys`, `*.bak`, `target/`, `node_modules/` and any test vault output.

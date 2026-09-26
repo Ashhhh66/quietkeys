@@ -197,6 +197,10 @@ pub struct AppState {
     /// How long after a copy to clear the clipboard, if it is still ours. `Duration::ZERO`
     /// means "do not start a timer" (tests clear by calling `lock` or the clipboard directly).
     clipboard_clear_after: Duration,
+    /// Test rendezvous at the start of the new-key Argon2 derivation. Production leaves
+    /// this empty, so the derivation is not delayed.
+    #[cfg(test)]
+    new_key_gate: Mutex<Option<Arc<std::sync::Barrier>>>,
 }
 
 impl AppState {
@@ -228,7 +232,25 @@ impl AppState {
             clipboard,
             copied_generation: Mutex::new(None),
             clipboard_clear_after,
+            #[cfg(test)]
+            new_key_gate: Mutex::new(None),
         }
+    }
+
+    /// Parks the change-master-password thread until a test is also waiting, then lets
+    /// the new-key derivation begin. The test calls `list_entries` or `lock` after this
+    /// returns, while that derivation is still running.
+    #[cfg(test)]
+    fn wait_until_new_key(&self) {
+        let gate = self.new_key_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.wait();
+        }
+    }
+
+    #[cfg(test)]
+    fn set_new_key_gate(&self, gate: Arc<std::sync::Barrier>) {
+        *self.new_key_gate.lock().unwrap() = Some(gate);
     }
 
     /// Rejects a second concurrent slow vault operation immediately as `Busy`, before it
@@ -337,9 +359,12 @@ impl AppState {
     }
 
     /// Verifies `current` by decrypting the vault file with it, then re-encrypts under
-    /// `new_password` with a new salt and the default Argon2 parameters. A wrong current
-    /// password counts toward the unlock throttle. An invalid new password does not.
-    /// Requires the vault to be unlocked, and that check happens before Argon2.
+    /// `new_password` with a new salt and the default Argon2 parameters. Both derivations
+    /// run before the vault mutex is taken, so listing entries still works during them.
+    /// A wrong current password counts toward the unlock throttle. An invalid new password
+    /// does not. Requires the vault to be unlocked, and that check happens before Argon2.
+    /// If the vault is locked again while Argon2 runs, the new key is dropped and neither
+    /// file is written.
     pub fn change_master_password(
         &self,
         current: &SecretString,
@@ -350,24 +375,36 @@ impl AppState {
         if let Some(seconds_remaining) = self.check_throttle(now) {
             return Err(VaultError::Throttled { seconds_remaining });
         }
+        if !self.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+
+        if let Err(err) = vault::verify_current_master_password(&self.vault_path, current) {
+            if err == VaultError::DecryptFailed {
+                self.record_wrong_password(now);
+            }
+            return Err(err);
+        }
+        vault::check_new_master_password(new_password)?;
+
+        // The new-key derivation starts as soon as this returns. A test waiting on the
+        // same barrier then calls list_entries or lock while that derivation runs.
+        #[cfg(test)]
+        self.wait_until_new_key();
+
+        let prepared =
+            vault::derive_new_master_key(new_password, crate::crypto::KdfParams::default())?;
+
         let mut guard = self.guard();
         let Some(vault) = guard.as_mut() else {
+            drop(prepared);
             return Err(VaultError::Locked);
         };
-        match vault::change_master_password(vault, &self.vault_path, current, new_password) {
-            Ok(()) => {
-                drop(guard);
-                self.reset_throttle();
-                Ok(())
-            }
-            Err(err) => {
-                if err == VaultError::DecryptFailed {
-                    drop(guard);
-                    self.record_wrong_password(now);
-                }
-                Err(err)
-            }
-        }
+        vault::write_rekeyed_vault(vault, &self.vault_path, prepared)?;
+        vault::copy_vault_over_backup(vault, &self.vault_path)?;
+        drop(guard);
+        self.reset_throttle();
+        Ok(())
     }
 
     /// Replaces the vault with its backup and leaves it unlocked. Refuses while already
@@ -1471,6 +1508,59 @@ mod tests {
         assert!(matches!(err, VaultError::PasswordTooShort { .. }));
         assert_eq!(state.throttle_guard().consecutive_failures, 0);
         assert!(load_still_opens_with_original(&dir));
+    }
+
+    #[test]
+    fn list_entries_responds_while_the_master_password_is_changing() {
+        let dir = TestDir::new();
+        let state = Arc::new(fast_unlocked(&dir));
+        state.add_entry(input(1)).unwrap();
+        let gate = Arc::new(std::sync::Barrier::new(2));
+        state.set_new_key_gate(Arc::clone(&gate));
+        let worker = Arc::clone(&state);
+        let handle = std::thread::spawn(move || {
+            worker.change_master_password(
+                &password(),
+                &SecretString::from("a brand new master password"),
+            )
+        });
+        // Both sides leave the barrier together, and the change thread's next step is
+        // the slow new-key derivation. list_entries runs during that derivation.
+        gate.wait();
+        let listed = state.list_entries();
+        assert!(listed.is_ok(), "{listed:?}");
+        assert!(
+            !handle.is_finished(),
+            "list_entries ran only after the master-password change had finished"
+        );
+        handle.join().unwrap().unwrap();
+        assert_eq!(state.list_entries().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn locking_during_a_master_password_change_leaves_both_files_untouched() {
+        let dir = TestDir::new();
+        let state = Arc::new(fast_unlocked(&dir));
+        state.add_entry(input(1)).unwrap();
+        let path = dir.vault_path();
+        let before = fs::read(&path).unwrap();
+        let bak = vault::backup_path(&path);
+        let bak_before = fs::read(&bak).unwrap();
+        let gate = Arc::new(std::sync::Barrier::new(2));
+        state.set_new_key_gate(Arc::clone(&gate));
+        let worker = Arc::clone(&state);
+        let handle = std::thread::spawn(move || {
+            worker.change_master_password(
+                &password(),
+                &SecretString::from("a brand new master password"),
+            )
+        });
+        gate.wait();
+        state.lock();
+        assert_eq!(handle.join().unwrap().unwrap_err(), VaultError::Locked);
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read(&bak).unwrap(), bak_before);
+        assert!(!state.is_unlocked());
     }
 
     fn load_still_opens_with_original(dir: &TestDir) -> bool {

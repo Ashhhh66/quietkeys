@@ -133,9 +133,20 @@ mod platform {
     struct ClipboardGuard;
 
     impl ClipboardGuard {
+        /// Another app may hold the clipboard for a moment. Retry so a password we
+        /// already generated is not left behind when the open fails once.
         unsafe fn open() -> Result<Self> {
-            OpenClipboard(None).map_err(|_| VaultError::Io(ErrorKind::Other))?;
-            Ok(Self)
+            const ATTEMPTS: u32 = 10;
+            const PAUSE: std::time::Duration = std::time::Duration::from_millis(20);
+            for attempt in 0..ATTEMPTS {
+                if OpenClipboard(None).is_ok() {
+                    return Ok(Self);
+                }
+                if attempt + 1 < ATTEMPTS {
+                    std::thread::sleep(PAUSE);
+                }
+            }
+            Err(VaultError::Io(ErrorKind::Other))
         }
     }
 
@@ -157,7 +168,9 @@ mod platform {
 
         static CLIPBOARD_TEST: Mutex<()> = Mutex::new(());
 
+        /// Uses the real Windows clipboard. Run it with `cargo test -- --ignored`.
         #[test]
+        #[ignore]
         fn copy_sets_history_formats_and_clear_follows_the_sequence_number() {
             let _guard = CLIPBOARD_TEST.lock().unwrap();
             let first = copy_concealed("quietkeys-clipboard-probe-1").unwrap();
@@ -204,7 +217,7 @@ mod platform {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use objc2_app_kit::NSPasteboard;
+    use objc2_app_kit::{NSPasteboard, NSPasteboardContentsOptions};
     use objc2_foundation::{NSData, NSString};
 
     use crate::error::{Result, VaultError};
@@ -215,7 +228,11 @@ mod platform {
         let text_type = NSString::from_str("public.utf8-plain-text");
         let concealed = NSString::from_str("org.nspasteboard.ConcealedType");
         let empty = NSData::with_bytes(&[]);
-        if pasteboard.clearContents() < 0
+        // CurrentHostOnly keeps the copy off Universal Clipboard. NSPasteboard is
+        // thread-safe and these methods are not main-thread-only, so the 30-second
+        // clear on a background thread calls the pasteboard directly.
+        if pasteboard.prepareForNewContentsWithOptions(NSPasteboardContentsOptions::CurrentHostOnly)
+            < 0
             || !pasteboard.setString_forType(&contents, &text_type)
             || !pasteboard.setData_forType(Some(&empty), &concealed)
         {
