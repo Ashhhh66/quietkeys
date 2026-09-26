@@ -5,7 +5,7 @@
 Built with Tauri, Rust and TypeScript.
 
 > [!WARNING]
-> quietkeys is a portfolio and learning project. It has **not been independently audited**. Please don't use it as your only store for passwords that matter.
+> quietkeys is a portfolio and learning project. It has **not been independently audited**. Please don't use it as your only store for passwords that matter. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 <!-- Add screenshots once the UI is final, e.g.:
 ![Vault screen, dark theme](docs/screenshots/vault-dark.png)
@@ -185,13 +185,18 @@ src/
 
 ## Roadmap
 
+The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROADMAP.md). What has shipped is in the [changelog](CHANGELOG.md).
+
 - [x] Phase 0: project setup
 - [x] Phase 1: crypto and vault engine
 - [x] Phase 2: app state and commands
 - [x] Phase 3: core interface
 - [ ] Phase 4: generator, clipboard, auto-lock, change master password, backups
-- [ ] Phase 5: polish, installers and CI
-- [ ] Phase 6–7: browser extension with anti-phishing autofill
+- [ ] Phase 5: polish, installers and CI, ending with the v1 release
+- [ ] Phase 6: onboarding and Emergency Kit, vault health, import
+- [ ] Phase 7: recovery code with vault format v2, choosing the vault location with conflict detection, TOTP
+- [ ] Phase 8: native host and pairing
+- [ ] Phase 9: browser extension
 
 ## License
 

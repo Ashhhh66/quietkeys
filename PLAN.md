@@ -215,20 +215,33 @@ Work through one phase at a time. Do not start the next phase until every accept
 - GitHub Actions: lint, test, and build on every push, plus `cargo audit` and `npm audit` to catch vulnerable dependencies. Enable Dependabot.
 - Code signing: unsigned apps trigger macOS Gatekeeper and Windows SmartScreen warnings. Signing and notarizing on macOS needs a paid Apple Developer account. Until then, explain the warning and how to open the app in the README.
 - README with screenshots, features, security design, **threat model**, limitations, and an "not independently audited" disclaimer.
+- **v1 release.** The first release ships at the end of this phase. Phases 6 and later are after v1.
 
-### Phase 6 — Native host and pairing (no browser UI yet)
+### Phase 6 — P1 features
+- Onboarding and an Emergency Kit.
+- Vault health.
+- Import.
+
+### Phase 7 — P2 features
+- Recovery code, which requires vault format v2.
+- Choosing the vault location, with conflict detection.
+- TOTP.
+
+### Phase 8 — Native host and pairing (no browser UI yet)
 - Build the `native-host` binary and the IPC listener inside the desktop app.
 - Implement pairing, token hashing, revocation, and the message schema from section 5b.
 - Write installer steps that register the native messaging host manifest for Chrome on Windows (registry key) and macOS (manifest file).
 - **Tests required:** malformed/oversized messages rejected; unpaired or revoked tokens rejected; every request fails while the vault is locked; domain matching tests covering subdomains, lookalike domains, IP addresses, `http://` and public suffixes like `co.uk`.
 - **Done when:** a test script can pair, call `find_logins`, and get correct results through the native host.
 
-### Phase 7 — Browser extension
+### Phase 9 — Browser extension
 - Manifest V3 extension in TypeScript: popup showing status and matching logins, a small icon in login fields, fill on click, pairing screen.
 - "Save this login?" prompt after a form submit, confirmed in the desktop app.
 - Chrome first; Firefox once stable (manifest differences only).
 - **Done when:** on a real site, the user can pair, click to fill a matching login, and save a new login, with no filling on non-matching or lookalike domains.
 - Publish to the Chrome Web Store (one-off developer fee) with a privacy policy stating the extension collects no data.
+
+Optional P3 work is not a phase. Those items stay in [ROADMAP.md](ROADMAP.md).
 
 ## 7. Threat model (for the README)
 
