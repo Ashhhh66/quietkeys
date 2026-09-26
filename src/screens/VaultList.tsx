@@ -382,7 +382,17 @@ export default function VaultList({ onLocked }: Props) {
       </div>
     );
   } else if (nav === "generator") {
-    details = <Generator onCopied={noticeCopy} />;
+    details = (
+      <Generator
+        onCopied={noticeCopy}
+        onSaveAsLogin={(text) => {
+          setAppliedPassword({ text, nonce: clockNow() });
+          setEditing("new");
+          setNav("all");
+          setGeneratorOverEditor(false);
+        }}
+      />
+    );
   } else if (nav === "deleted") {
     details = <DeletedScreen onChanged={() => void refresh()} />;
   } else if (selected) {

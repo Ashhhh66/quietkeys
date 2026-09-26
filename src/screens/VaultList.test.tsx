@@ -71,7 +71,7 @@ beforeEach(() => {
   copyUsername.mockReset().mockResolvedValue(undefined);
   clearClipboard.mockReset().mockResolvedValue(undefined);
   openEntryWebsite.mockReset().mockResolvedValue(undefined);
-  generatePassword.mockReset().mockResolvedValue("generated-secret");
+  generatePassword.mockReset().mockResolvedValue({ value: "generated-secret", bits: 90 });
   scorePassword.mockReset().mockResolvedValue({ score: 3, warning: null, suggestions: [] });
 });
 
@@ -387,5 +387,17 @@ describe("VaultList", () => {
     await user.click(screen.getByRole("button", { name: "Clear now" }));
     expect(screen.getByRole("status")).toHaveTextContent("Copying isn't available on this system.");
     expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("saves a generated password as a new login", async () => {
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    await within(await entryList()).findByText("GitHub");
+
+    await user.click(screen.getByRole("button", { name: "Generator" }));
+    expect(await screen.findByText("generated-secret")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save as new login" }));
+
+    expect(screen.getByLabelText("Password")).toHaveValue("generated-secret");
   });
 });

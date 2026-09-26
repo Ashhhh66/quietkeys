@@ -66,6 +66,19 @@ export interface PasswordOptions {
   excludeAmbiguous: boolean;
 }
 
+export interface PassphraseOptions {
+  words: number;
+  separator: string;
+  capitalise: boolean;
+  addNumber: boolean;
+}
+
+/** A generated password or passphrase, with entropy from the options that produced it. */
+export interface GeneratedSecret {
+  value: string;
+  bits: number;
+}
+
 export interface PasswordScore {
   score: number;
   warning: string | null;
@@ -172,8 +185,11 @@ export const deleteEntry = (id: string): Promise<void> => call("delete_entry", {
 
 export const backupExists = (): Promise<boolean> => call("backup_exists");
 
-export const generatePassword = (options: PasswordOptions): Promise<string> =>
+export const generatePassword = (options: PasswordOptions): Promise<GeneratedSecret> =>
   call("generate_password", { options });
+
+export const generatePassphrase = (options: PassphraseOptions): Promise<GeneratedSecret> =>
+  call("generate_passphrase", { options });
 
 export const scorePassword = (password: string): Promise<PasswordScore> =>
   call("score_password", { password });

@@ -23,7 +23,7 @@ Built with Tauri, Rust and TypeScript.
 - Unlock throttling after repeated wrong passwords
 - Automatic backup of the previous vault on every save
 - Dark and light themes
-- Password generator and strength meter
+- Password and passphrase generator, and a strength meter
 - Copy to clipboard with auto-clear, excluded from clipboard history
 - Auto-lock after inactivity
 - Change master password
@@ -237,3 +237,5 @@ The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROAD
 ## License
 
 [MIT](LICENSE)
+
+The passphrase wordlist is the EFF Large Wordlist, CC BY 3.0 US. See [ATTRIBUTIONS.md](ATTRIBUTIONS.md).

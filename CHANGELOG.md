@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The login list can be sorted by recently changed, and opens sorted by recently used.
 - Favourites, password history, and a Recently deleted list. Deleted logins stay in the encrypted vault for 30 days, then are removed. A delete can be undone for 10 seconds; deleting forever still asks first.
 - Each previous password has its own id, so copying one still copies that password after a newer change.
+- The generator can build a passphrase from the EFF Large Wordlist. It regenerates when an option changes. Generated passwords and passphrases show strength from those options; passwords you type still use zxcvbn.
 
 ### Changed
 

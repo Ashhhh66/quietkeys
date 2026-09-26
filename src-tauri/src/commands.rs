@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::error::VaultError;
-use crate::generator::{self, PasswordOptions, PasswordScore};
+use crate::generator::{self, GeneratedSecret, PassphraseOptions, PasswordOptions, PasswordScore};
 use crate::state::{
     AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput,
 };
@@ -94,8 +94,16 @@ pub fn delete_entry(state: State<'_, AppState>, id: String) -> CommandResult<()>
 /// Works while the vault is locked. The generated password is returned to the UI; that is
 /// the point of this command.
 #[tauri::command]
-pub fn generate_password(options: PasswordOptions) -> CommandResult<String> {
-    Ok(generator::generate_password(&options)?.to_string())
+pub fn generate_password(options: PasswordOptions) -> CommandResult<GeneratedSecret> {
+    let bits = generator::password_entropy_bits(&options)?;
+    let value = generator::generate_password(&options)?.to_string();
+    Ok(GeneratedSecret { value, bits })
+}
+
+/// Works while the vault is locked. The passphrase is returned to the UI.
+#[tauri::command]
+pub fn generate_passphrase(options: PassphraseOptions) -> CommandResult<GeneratedSecret> {
+    generator::generate_passphrase(&options)
 }
 
 /// Works while the vault is locked.

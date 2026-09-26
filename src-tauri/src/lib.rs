@@ -43,6 +43,7 @@ pub fn run() {
             commands::update_entry,
             commands::delete_entry,
             commands::generate_password,
+            commands::generate_passphrase,
             commands::score_password,
             commands::change_master_password,
             commands::copy_password,

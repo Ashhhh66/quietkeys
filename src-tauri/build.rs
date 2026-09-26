@@ -12,6 +12,7 @@ const COMMANDS: &[&str] = &[
     "update_entry",
     "delete_entry",
     "generate_password",
+    "generate_passphrase",
     "score_password",
     "change_master_password",
     "copy_password",
