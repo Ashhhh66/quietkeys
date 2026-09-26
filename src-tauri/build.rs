@@ -6,6 +6,7 @@ const COMMANDS: &[&str] = &[
     "lock",
     "list_entries",
     "get_password",
+    "get_entry",
     "add_entry",
     "update_entry",
     "delete_entry",

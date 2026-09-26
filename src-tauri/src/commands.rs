@@ -5,7 +5,9 @@ use secrecy::SecretString;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::VaultError;
-use crate::state::{AppState, EntryInput, EntrySummary, RevealedPassword};
+use crate::state::{
+    AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput,
+};
 
 type CommandResult<T> = Result<T, VaultError>;
 
@@ -59,6 +61,11 @@ pub fn get_password(state: State<'_, AppState>, id: String) -> CommandResult<Rev
 }
 
 #[tauri::command]
+pub fn get_entry(state: State<'_, AppState>, id: String) -> CommandResult<EntryDetails> {
+    state.get_entry(&id)
+}
+
+#[tauri::command]
 pub fn add_entry(state: State<'_, AppState>, entry: EntryInput) -> CommandResult<EntrySummary> {
     state.add_entry(entry)
 }
@@ -67,7 +74,7 @@ pub fn add_entry(state: State<'_, AppState>, entry: EntryInput) -> CommandResult
 pub fn update_entry(
     state: State<'_, AppState>,
     id: String,
-    entry: EntryInput,
+    entry: UpdateEntryInput,
 ) -> CommandResult<EntrySummary> {
     state.update_entry(&id, entry)
 }

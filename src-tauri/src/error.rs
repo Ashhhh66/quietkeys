@@ -106,12 +106,22 @@ impl From<io::Error> for VaultError {
     }
 }
 
-/// Sent to the UI as `{ "kind": "...", "message": "..." }`.
+/// Sent to the UI as `{ "kind": "...", "message": "..." }`, plus `secondsRemaining` for
+/// `Throttled` so the Unlock screen can show a live countdown instead of a static
+/// message. Every key is camelCase, matching every other type sent to the frontend.
 impl Serialize for VaultError {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("VaultError", 2)?;
+        let field_count = if matches!(self, VaultError::Throttled { .. }) {
+            3
+        } else {
+            2
+        };
+        let mut state = serializer.serialize_struct("VaultError", field_count)?;
         state.serialize_field("kind", self.kind())?;
         state.serialize_field("message", &self.to_string())?;
+        if let VaultError::Throttled { seconds_remaining } = self {
+            state.serialize_field("secondsRemaining", seconds_remaining)?;
+        }
         state.end()
     }
 }
@@ -149,6 +159,26 @@ mod tests {
         assert_eq!(
             serde_json::to_value(VaultError::Locked).unwrap()["kind"],
             "locked"
+        );
+    }
+
+    #[test]
+    fn throttled_error_includes_seconds_remaining_in_camel_case() {
+        let value = serde_json::to_value(VaultError::Throttled {
+            seconds_remaining: 7,
+        })
+        .unwrap();
+        assert_eq!(value["kind"], "throttled");
+        assert_eq!(value["secondsRemaining"], 7);
+        assert!(value.get("seconds_remaining").is_none());
+    }
+
+    #[test]
+    fn non_throttled_errors_have_no_extra_fields() {
+        let value = serde_json::to_value(VaultError::Locked).unwrap();
+        assert_eq!(
+            value.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["kind", "message"]
         );
     }
 }

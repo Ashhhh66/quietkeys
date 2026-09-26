@@ -12,6 +12,7 @@
     "allow-lock",
     "allow-list-entries",
     "allow-get-password",
+    "allow-get-entry",
     "allow-add-entry",
     "allow-update-entry",
     "allow-delete-entry"

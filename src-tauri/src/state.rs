@@ -53,24 +53,53 @@ pub struct EntryInput {
 impl EntryInput {
     /// Rejects a field that is too long, counting Unicode characters, not bytes.
     fn check_lengths(&self) -> Result<()> {
-        let fields = [
-            ("title", &self.title, MAX_TITLE_CHARS),
-            ("username", &self.username, MAX_USERNAME_CHARS),
-            ("password", &self.password, MAX_PASSWORD_CHARS),
-            ("url", &self.url, MAX_URL_CHARS),
-            ("notes", &self.notes, MAX_NOTES_CHARS),
-        ];
-        for (field, value, max_chars) in fields {
-            if value.chars().count() > max_chars {
-                return Err(VaultError::FieldTooLong { field, max_chars });
-            }
+        check_field_length("title", &self.title, MAX_TITLE_CHARS)?;
+        check_field_length("username", &self.username, MAX_USERNAME_CHARS)?;
+        check_field_length("password", &self.password, MAX_PASSWORD_CHARS)?;
+        check_field_length("url", &self.url, MAX_URL_CHARS)?;
+        check_field_length("notes", &self.notes, MAX_NOTES_CHARS)?;
+        Ok(())
+    }
+}
+
+/// What the UI sends when editing an entry. Unlike `EntryInput`, `password` is optional:
+/// `None` keeps the entry's existing password unchanged, so the editor never has to
+/// display or resend a password the user hasn't chosen to reveal or change. Wiped when
+/// dropped.
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateEntryInput {
+    pub title: String,
+    pub username: String,
+    pub password: Option<String>,
+    pub url: String,
+    pub notes: String,
+}
+
+impl UpdateEntryInput {
+    fn check_lengths(&self) -> Result<()> {
+        check_field_length("title", &self.title, MAX_TITLE_CHARS)?;
+        check_field_length("username", &self.username, MAX_USERNAME_CHARS)?;
+        if let Some(password) = &self.password {
+            check_field_length("password", password, MAX_PASSWORD_CHARS)?;
         }
+        check_field_length("url", &self.url, MAX_URL_CHARS)?;
+        check_field_length("notes", &self.notes, MAX_NOTES_CHARS)?;
+        Ok(())
+    }
+}
+
+fn check_field_length(field: &'static str, value: &str, max_chars: usize) -> Result<()> {
+    if value.chars().count() > max_chars {
+        Err(VaultError::FieldTooLong { field, max_chars })
+    } else {
         Ok(())
     }
 }
 
 /// One row of the entry list. Deliberately has no password or notes field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EntrySummary {
     pub id: String,
     pub title: String,
@@ -85,6 +114,34 @@ impl From<&Entry> for EntrySummary {
             title: entry.title.clone(),
             username: entry.username.clone(),
             url: entry.url.clone(),
+        }
+    }
+}
+
+/// Every entry field except the password: what the editor loads to prefill a form.
+/// Passwords are still only ever sent one at a time, via `get_password`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryDetails {
+    pub id: String,
+    pub title: String,
+    pub username: String,
+    pub url: String,
+    pub notes: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<&Entry> for EntryDetails {
+    fn from(entry: &Entry) -> Self {
+        Self {
+            id: entry.id.clone(),
+            title: entry.title.clone(),
+            username: entry.username.clone(),
+            url: entry.url.clone(),
+            notes: entry.notes.clone(),
+            created_at: entry.created_at.clone(),
+            updated_at: entry.updated_at.clone(),
         }
     }
 }
@@ -261,6 +318,11 @@ impl AppState {
         })
     }
 
+    /// Every field of one entry except the password.
+    pub fn get_entry(&self, id: &str) -> Result<EntryDetails> {
+        self.with_vault(|vault, _| Ok(EntryDetails::from(find(&vault.data, id)?)))
+    }
+
     pub fn add_entry(&self, mut input: EntryInput) -> Result<EntrySummary> {
         self.modify(|data| {
             input.check_lengths()?;
@@ -281,14 +343,18 @@ impl AppState {
         })
     }
 
-    pub fn update_entry(&self, id: &str, mut input: EntryInput) -> Result<EntrySummary> {
+    /// `input.password`: `None` keeps the entry's existing password; `Some(new)` replaces
+    /// it. Every other field is always replaced.
+    pub fn update_entry(&self, id: &str, mut input: UpdateEntryInput) -> Result<EntrySummary> {
         self.modify(|data| {
             input.check_lengths()?;
             let now = now_rfc3339()?;
             let entry = find_mut(data, id)?;
             replace_wiping(&mut entry.title, mem::take(&mut input.title));
             replace_wiping(&mut entry.username, mem::take(&mut input.username));
-            replace_wiping(&mut entry.password, mem::take(&mut input.password));
+            if let Some(password) = input.password.take() {
+                replace_wiping(&mut entry.password, password);
+            }
             replace_wiping(&mut entry.url, mem::take(&mut input.url));
             replace_wiping(&mut entry.notes, mem::take(&mut input.notes));
             entry.updated_at = now;
@@ -414,15 +480,39 @@ mod tests {
         state
     }
 
+    fn update_input(n: u32) -> UpdateEntryInput {
+        UpdateEntryInput {
+            title: format!("Site {n}"),
+            username: format!("user{n}@example.com"),
+            password: Some(format!("secret-password-{n}")),
+            url: format!("https://site{n}.example.com"),
+            notes: format!("notes {n}"),
+        }
+    }
+
+    fn update_input_with(field: &str, value: String) -> UpdateEntryInput {
+        let mut entry = update_input(1);
+        match field {
+            "title" => entry.title = value,
+            "username" => entry.username = value,
+            "password" => entry.password = Some(value),
+            "url" => entry.url = value,
+            "notes" => entry.notes = value,
+            _ => unreachable!(),
+        }
+        entry
+    }
+
     /// Calls every protected operation and returns each result, without the value.
     fn call_every_protected_operation(state: &AppState) -> Vec<(&'static str, Result<()>)> {
         vec![
             ("list_entries", state.list_entries().map(drop)),
             ("get_password", state.get_password("any-id").map(drop)),
+            ("get_entry", state.get_entry("any-id").map(drop)),
             ("add_entry", state.add_entry(input(9)).map(drop)),
             (
                 "update_entry",
-                state.update_entry("any-id", input(9)).map(drop),
+                state.update_entry("any-id", update_input(9)).map(drop),
             ),
             ("delete_entry", state.delete_entry("any-id")),
         ]
@@ -604,7 +694,7 @@ mod tests {
             .created_at
             .clone();
 
-        let updated = state.update_entry(&added.id, input(2)).unwrap();
+        let updated = state.update_entry(&added.id, update_input(2)).unwrap();
         assert_eq!(updated.id, added.id);
         assert_eq!(updated.title, "Site 2");
 
@@ -618,7 +708,88 @@ mod tests {
         assert!(modified >= created);
 
         assert_eq!(
-            state.update_entry("no-such-id", input(3)).err(),
+            state.update_entry("no-such-id", update_input(3)).err(),
+            Some(VaultError::EntryNotFound)
+        );
+    }
+
+    #[test]
+    fn update_entry_with_password_none_keeps_the_existing_password() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let added = state.add_entry(input(1)).unwrap();
+
+        let mut without_password = update_input(2);
+        without_password.password = None;
+        state.update_entry(&added.id, without_password).unwrap();
+
+        let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
+        let entry = &on_disk.data.entries[0];
+        assert_eq!(entry.password, "secret-password-1", "password unchanged");
+        assert_eq!(entry.title, "Site 2", "other fields still updated");
+        assert_eq!(entry.username, "user2@example.com");
+    }
+
+    #[test]
+    fn update_entry_with_password_some_replaces_the_password() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let added = state.add_entry(input(1)).unwrap();
+
+        state.update_entry(&added.id, update_input(2)).unwrap();
+
+        let on_disk = vault::load(&dir.vault_path(), &password()).unwrap();
+        assert_eq!(on_disk.data.entries[0].password, "secret-password-2");
+    }
+
+    #[test]
+    fn update_entry_still_checks_other_field_lengths_when_password_is_none() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let added = state.add_entry(input(1)).unwrap();
+
+        let mut too_long_title = update_input(2);
+        too_long_title.password = None;
+        too_long_title.title = "a".repeat(MAX_TITLE_CHARS + 1);
+        assert_eq!(
+            state.update_entry(&added.id, too_long_title).err(),
+            Some(VaultError::FieldTooLong {
+                field: "title",
+                max_chars: MAX_TITLE_CHARS
+            })
+        );
+    }
+
+    #[test]
+    fn get_entry_returns_every_field_except_the_password() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        let added = state.add_entry(input(1)).unwrap();
+
+        let details = state.get_entry(&added.id).unwrap();
+        assert_eq!(details.id, added.id);
+        assert_eq!(details.title, "Site 1");
+        assert_eq!(details.username, "user1@example.com");
+        assert_eq!(details.url, "https://site1.example.com");
+        assert_eq!(details.notes, "notes 1");
+        assert_eq!(details.created_at, details.updated_at);
+        OffsetDateTime::parse(&details.created_at, &Rfc3339).unwrap();
+
+        let json = serde_json::to_string(&details).unwrap();
+        assert!(!json.contains("secret-password"));
+        assert!(!json.contains("password"));
+        // camelCase keys, matching every other type sent to the frontend.
+        assert!(json.contains("\"createdAt\""));
+        assert!(json.contains("\"updatedAt\""));
+        assert!(!json.contains("created_at"));
+    }
+
+    #[test]
+    fn get_entry_fails_for_an_unknown_id() {
+        let dir = TestDir::new();
+        let state = unlocked_state(&dir);
+        assert_eq!(
+            state.get_entry("no-such-id").err(),
             Some(VaultError::EntryNotFound)
         );
     }
@@ -653,7 +824,7 @@ mod tests {
         fs::create_dir(&tmp).unwrap();
 
         assert!(state.add_entry(input(2)).is_err());
-        assert!(state.update_entry(&kept.id, input(3)).is_err());
+        assert!(state.update_entry(&kept.id, update_input(3)).is_err());
         assert!(state.delete_entry(&kept.id).is_err());
 
         assert_eq!(state.list_entries().unwrap(), vec![kept.clone()]);
@@ -759,7 +930,7 @@ mod tests {
         let dir = TestDir::new();
         let state = unlocked_state(&dir);
         let added = state.add_entry(input(1)).unwrap();
-        let too_long = input_with("notes", "a".repeat(MAX_NOTES_CHARS + 1));
+        let too_long = update_input_with("notes", "a".repeat(MAX_NOTES_CHARS + 1));
         assert_eq!(
             state.update_entry(&added.id, too_long).err(),
             Some(VaultError::FieldTooLong {
