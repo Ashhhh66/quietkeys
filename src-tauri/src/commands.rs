@@ -1,10 +1,13 @@
 //! The Tauri commands: the only bridge between the UI and the vault. Each one delegates to
 //! `AppState`, which applies the locked check and holds all the logic.
 
+use std::path::Path;
+
 use secrecy::SecretString;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::VaultError;
+use crate::generator::{self, PasswordOptions, PasswordScore};
 use crate::state::{
     AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput,
 };
@@ -82,4 +85,56 @@ pub fn update_entry(
 #[tauri::command]
 pub fn delete_entry(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     state.delete_entry(&id)
+}
+
+/// Works while the vault is locked. The generated password is returned to the UI; that is
+/// the point of this command.
+#[tauri::command]
+pub fn generate_password(options: PasswordOptions) -> CommandResult<String> {
+    Ok(generator::generate_password(&options)?.to_string())
+}
+
+/// Works while the vault is locked.
+#[tauri::command]
+pub fn score_password(password: String) -> PasswordScore {
+    generator::score_password(&password)
+}
+
+#[tauri::command]
+pub async fn change_master_password(
+    app: AppHandle,
+    current: String,
+    new: String,
+) -> CommandResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .change_master_password(&SecretString::from(current), &SecretString::from(new))
+    })
+    .await
+    .map_err(|_| VaultError::Crypto)?
+}
+
+#[tauri::command]
+pub fn copy_password(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.copy_password(&id)
+}
+
+#[tauri::command]
+pub fn copy_username(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.copy_username(&id)
+}
+
+#[tauri::command]
+pub async fn restore_from_backup(app: AppHandle, master_password: String) -> CommandResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .restore_from_backup(&SecretString::from(master_password))
+    })
+    .await
+    .map_err(|_| VaultError::Crypto)?
+}
+
+#[tauri::command]
+pub fn export_vault(state: State<'_, AppState>, path: String) -> CommandResult<()> {
+    state.export_vault(Path::new(&path))
 }

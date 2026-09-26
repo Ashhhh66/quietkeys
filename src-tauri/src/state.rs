@@ -12,6 +12,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
+use crate::clipboard::{self, ConcealedClipboard};
 use crate::error::{Result, VaultError};
 use crate::vault::{self, Entry, UnlockedVault, VaultData};
 
@@ -184,10 +185,18 @@ pub struct AppState {
     vault_path: PathBuf,
     unlocked: Mutex<Option<UnlockedVault>>,
     throttle: Mutex<ThrottleState>,
-    /// Held for the whole body of `create_vault`/`unlock`, so only one of either can run
-    /// at a time. Its data is unused; only the ability to lock it matters.
+    /// Held for the whole body of `create_vault`, `unlock`, `change_master_password`, and
+    /// `restore_from_backup`, so only one of them can run at a time. Its data is unused;
+    /// only the ability to lock it matters.
     single_flight: Mutex<()>,
     clock: Arc<dyn Clock>,
+    clipboard: Arc<dyn ConcealedClipboard>,
+    /// The clipboard change counter from the last copy this process made. Not the copied
+    /// text: that is never stored. `None` means there is nothing of ours to clear.
+    copied_generation: Mutex<Option<u64>>,
+    /// How long after a copy to clear the clipboard, if it is still ours. `Duration::ZERO`
+    /// means "do not start a timer" (tests clear by calling `lock` or the clipboard directly).
+    clipboard_clear_after: Duration,
 }
 
 impl AppState {
@@ -196,18 +205,35 @@ impl AppState {
     }
 
     fn with_clock(vault_path: PathBuf, clock: Arc<dyn Clock>) -> Self {
+        Self::assemble(
+            vault_path,
+            clock,
+            Arc::new(clipboard::OsClipboard),
+            clipboard::CLEAR_AFTER,
+        )
+    }
+
+    fn assemble(
+        vault_path: PathBuf,
+        clock: Arc<dyn Clock>,
+        clipboard: Arc<dyn ConcealedClipboard>,
+        clipboard_clear_after: Duration,
+    ) -> Self {
         Self {
             vault_path,
             unlocked: Mutex::new(None),
             throttle: Mutex::new(ThrottleState::default()),
             single_flight: Mutex::new(()),
             clock,
+            clipboard,
+            copied_generation: Mutex::new(None),
+            clipboard_clear_after,
         }
     }
 
-    /// Rejects a second concurrent `create_vault`/`unlock` call immediately as `Busy`,
-    /// before it can run Argon2 or touch the throttle. `try_lock` never waits, so a busy
-    /// caller finds out at once rather than blocking the UI thread.
+    /// Rejects a second concurrent slow vault operation immediately as `Busy`, before it
+    /// can run Argon2 or touch the throttle. `try_lock` never waits, so a busy caller
+    /// finds out at once rather than blocking the UI thread.
     fn enter_single_flight(&self) -> Result<MutexGuard<'_, ()>> {
         match self.single_flight.try_lock() {
             Ok(guard) => Ok(guard),
@@ -231,7 +257,7 @@ impl AppState {
 
     /// Creates the vault file and leaves it unlocked.
     ///
-    /// Fails with `Busy` if a `create_vault` or `unlock` call is already running.
+    /// Fails with `Busy` if another slow vault operation is already running.
     pub fn create_vault(&self, password: &SecretString) -> Result<()> {
         let _slot = self.enter_single_flight()?;
         let vault = vault::create(&self.vault_path, password)?;
@@ -246,8 +272,8 @@ impl AppState {
     /// Argon2. A correct password resets the count. Only a wrong password (not a corrupt
     /// or unreadable file) counts as an attempt.
     ///
-    /// Fails with `Busy` if a `create_vault` or `unlock` call is already running; that
-    /// check happens first, so a busy call never touches the throttle either.
+    /// Fails with `Busy` if another slow vault operation is already running; that check
+    /// happens first, so a busy call never touches the throttle either.
     pub fn unlock(&self, password: &SecretString) -> Result<()> {
         let _slot = self.enter_single_flight()?;
         let now = self.clock.now();
@@ -301,10 +327,128 @@ impl AppState {
         }
     }
 
-    /// Drops the unlocked vault, which wipes its key and entries. Does nothing if already
-    /// locked.
+    /// Drops the unlocked vault, which wipes its key and entries. Also clears the
+    /// clipboard when it still holds the value this process copied. Does nothing to the
+    /// vault if already locked. A clipboard error (including "unsupported" on Linux)
+    /// does not stop the lock.
     pub fn lock(&self) {
+        self.clear_copied();
         *self.guard() = None;
+    }
+
+    /// Verifies `current` by decrypting the vault file with it, then re-encrypts under
+    /// `new_password` with a new salt and the default Argon2 parameters. A wrong current
+    /// password counts toward the unlock throttle. An invalid new password does not.
+    /// Requires the vault to be unlocked, and that check happens before Argon2.
+    pub fn change_master_password(
+        &self,
+        current: &SecretString,
+        new_password: &SecretString,
+    ) -> Result<()> {
+        let _slot = self.enter_single_flight()?;
+        let now = self.clock.now();
+        if let Some(seconds_remaining) = self.check_throttle(now) {
+            return Err(VaultError::Throttled { seconds_remaining });
+        }
+        let mut guard = self.guard();
+        let Some(vault) = guard.as_mut() else {
+            return Err(VaultError::Locked);
+        };
+        match vault::change_master_password(vault, &self.vault_path, current, new_password) {
+            Ok(()) => {
+                drop(guard);
+                self.reset_throttle();
+                Ok(())
+            }
+            Err(err) => {
+                if err == VaultError::DecryptFailed {
+                    drop(guard);
+                    self.record_wrong_password(now);
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Replaces the vault with its backup and leaves it unlocked. Refuses while already
+    /// unlocked, before reading the backup. A wrong password counts toward the throttle
+    /// and does not move the current file.
+    pub fn restore_from_backup(&self, password: &SecretString) -> Result<()> {
+        let _slot = self.enter_single_flight()?;
+        if self.is_unlocked() {
+            return Err(VaultError::AlreadyUnlocked);
+        }
+        let now = self.clock.now();
+        if let Some(seconds_remaining) = self.check_throttle(now) {
+            return Err(VaultError::Throttled { seconds_remaining });
+        }
+        match vault::restore_replacing(&self.vault_path, password) {
+            Ok(vault) => {
+                *self.guard() = Some(vault);
+                self.reset_throttle();
+                Ok(())
+            }
+            Err(err) => {
+                if err == VaultError::DecryptFailed {
+                    self.record_wrong_password(now);
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Copies the encrypted vault file to `dest`, refusing to overwrite. Requires unlock.
+    pub fn export_vault(&self, dest: &Path) -> Result<()> {
+        self.with_vault(|_, _| vault::export_encrypted(&self.vault_path, dest))
+    }
+
+    /// Writes the entry's password to the OS clipboard from Rust. The password is not
+    /// returned to the caller and is not kept after the copy.
+    pub fn copy_password(&self, id: &str) -> Result<()> {
+        let password = self.get_password(id)?;
+        self.copy_to_clipboard(password.expose())
+    }
+
+    /// Writes the entry's username to the OS clipboard.
+    pub fn copy_username(&self, id: &str) -> Result<()> {
+        let username = self.with_vault(|vault, _| Ok(find(&vault.data, id)?.username.clone()))?;
+        self.copy_to_clipboard(&username)
+    }
+
+    fn copy_to_clipboard(&self, text: &str) -> Result<()> {
+        let generation = self.clipboard.copy_concealed(text)?;
+        *self.generation_guard() = Some(generation);
+        self.schedule_clear(generation);
+        Ok(())
+    }
+
+    fn schedule_clear(&self, generation: u64) {
+        if self.clipboard_clear_after.is_zero() {
+            return;
+        }
+        let clipboard = Arc::clone(&self.clipboard);
+        let delay = self.clipboard_clear_after;
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            let _ = clipboard.clear_if_unchanged(generation);
+        });
+    }
+
+    fn clear_copied(&self) {
+        let generation = self.generation_guard().take();
+        if let Some(generation) = generation {
+            let _ = self.clipboard.clear_if_unchanged(generation);
+        }
+    }
+
+    fn generation_guard(&self) -> MutexGuard<'_, Option<u64>> {
+        match self.copied_generation.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                self.copied_generation.clear_poison();
+                poisoned.into_inner()
+            }
+        }
     }
 
     pub fn list_entries(&self) -> Result<Vec<EntrySummary>> {
@@ -480,6 +624,28 @@ mod tests {
         state
     }
 
+    /// A vault created with the fast test KDF and placed in memory directly, so these
+    /// tests do not run the default-parameter upgrade that `load` prepares.
+    fn fast_unlocked(dir: &TestDir) -> AppState {
+        fast_unlocked_with(dir, Arc::new(SystemClock), Arc::new(clipboard::OsClipboard))
+    }
+
+    fn fast_unlocked_with(
+        dir: &TestDir,
+        clock: Arc<dyn Clock>,
+        clipboard: Arc<dyn ConcealedClipboard>,
+    ) -> AppState {
+        let vault = vault::create_with_params(
+            &dir.vault_path(),
+            &password(),
+            crate::crypto::KdfParams::fast(),
+        )
+        .unwrap();
+        let state = AppState::assemble(dir.vault_path(), clock, clipboard, Duration::ZERO);
+        *state.guard() = Some(vault);
+        state
+    }
+
     fn update_input(n: u32) -> UpdateEntryInput {
         UpdateEntryInput {
             title: format!("Site {n}"),
@@ -515,6 +681,16 @@ mod tests {
                 state.update_entry("any-id", update_input(9)).map(drop),
             ),
             ("delete_entry", state.delete_entry("any-id")),
+            (
+                "change_master_password",
+                state.change_master_password(&password(), &password()),
+            ),
+            (
+                "export_vault",
+                state.export_vault(Path::new("export.quietkeys")),
+            ),
+            ("copy_password", state.copy_password("any-id")),
+            ("copy_username", state.copy_username("any-id")),
         ]
     }
 
@@ -1119,6 +1295,14 @@ mod tests {
 
         assert_eq!(state.unlock(&wrong_password()), Err(VaultError::Busy));
         assert_eq!(state.create_vault(&password()), Err(VaultError::Busy));
+        assert_eq!(
+            state.change_master_password(&password(), &password()),
+            Err(VaultError::Busy)
+        );
+        assert_eq!(
+            state.restore_from_backup(&password()),
+            Err(VaultError::Busy)
+        );
         // Neither call ran Argon2 or the throttle logic: no failure was recorded, and
         // the vault file (a fresh create would refuse to overwrite it) is untouched.
         assert_eq!(state.throttle_guard().consecutive_failures, 0);
@@ -1237,6 +1421,136 @@ mod tests {
             .filter(|r| matches!(r, Err(VaultError::Busy)))
             .count();
         assert_eq!(busy_count, 1, "{create_result:?} / {unlock_result:?}");
+    }
+
+    #[test]
+    fn a_wrong_current_password_counts_toward_the_throttle() {
+        let dir = TestDir::new();
+        let clock = FakeClock::new();
+        let state = fast_unlocked_with(&dir, clock.clone(), Arc::new(clipboard::OsClipboard));
+        let replacement = SecretString::from("a brand new master password");
+
+        for _ in 0..3 {
+            assert_eq!(
+                state.change_master_password(&wrong_password(), &replacement),
+                Err(VaultError::DecryptFailed)
+            );
+        }
+        assert_eq!(
+            state.change_master_password(&password(), &replacement),
+            Err(VaultError::Throttled {
+                seconds_remaining: 1
+            })
+        );
+        assert!(load_still_opens_with_original(&dir));
+    }
+
+    #[test]
+    fn an_invalid_new_password_does_not_count_toward_the_throttle() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        let err = state
+            .change_master_password(&password(), &SecretString::from("too short"))
+            .unwrap_err();
+        assert!(matches!(err, VaultError::PasswordTooShort { .. }));
+        assert_eq!(state.throttle_guard().consecutive_failures, 0);
+        assert!(load_still_opens_with_original(&dir));
+    }
+
+    fn load_still_opens_with_original(dir: &TestDir) -> bool {
+        vault::load(&dir.vault_path(), &password()).is_ok()
+    }
+
+    #[test]
+    fn restore_refuses_while_unlocked() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        assert_eq!(
+            state.restore_from_backup(&password()),
+            Err(VaultError::AlreadyUnlocked)
+        );
+        assert!(state.is_unlocked());
+        assert!(!vault::pre_restore_path(&dir.vault_path()).exists());
+    }
+
+    #[test]
+    fn a_missing_backup_does_not_throttle_or_move_the_vault() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        state.lock();
+        let before = fs::read(dir.vault_path()).unwrap();
+        assert_eq!(
+            state.restore_from_backup(&wrong_password()),
+            Err(VaultError::Io(std::io::ErrorKind::NotFound))
+        );
+        assert_eq!(fs::read(dir.vault_path()).unwrap(), before);
+        assert!(!vault::pre_restore_path(&dir.vault_path()).exists());
+        assert_eq!(state.throttle_guard().consecutive_failures, 0);
+    }
+
+    #[test]
+    fn a_wrong_restore_password_does_not_move_the_vault_and_counts_toward_the_throttle() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        state.add_entry(input(1)).unwrap();
+        state.add_entry(input(2)).unwrap();
+        let current = fs::read(dir.vault_path()).unwrap();
+        state.lock();
+
+        assert_eq!(
+            state.restore_from_backup(&wrong_password()),
+            Err(VaultError::DecryptFailed)
+        );
+        assert_eq!(fs::read(dir.vault_path()).unwrap(), current);
+        assert!(!vault::pre_restore_path(&dir.vault_path()).exists());
+        assert_eq!(state.throttle_guard().consecutive_failures, 1);
+        assert!(!state.is_unlocked());
+    }
+
+    #[test]
+    fn clipboard_clears_only_the_generation_this_process_copied() {
+        let dir = TestDir::new();
+        let clipboard = Arc::new(clipboard::FakeClipboard::default());
+        let state = fast_unlocked_with(
+            &dir,
+            Arc::new(SystemClock),
+            Arc::clone(&clipboard) as Arc<dyn ConcealedClipboard>,
+        );
+        let added = state.add_entry(input(1)).unwrap();
+
+        state.copy_password(&added.id).unwrap();
+        let first = clipboard.current();
+        state.copy_username(&added.id).unwrap();
+        let second = clipboard.current();
+        assert_ne!(first, second);
+
+        clipboard.clear_if_unchanged(first).unwrap();
+        assert_eq!(clipboard.current(), second);
+
+        state.lock();
+        assert!(!state.is_unlocked());
+        assert_eq!(clipboard.current(), 0);
+    }
+
+    #[test]
+    fn an_unsupported_clipboard_does_not_stop_lock() {
+        struct UnsupportedClipboard;
+        impl ConcealedClipboard for UnsupportedClipboard {
+            fn copy_concealed(&self, _: &str) -> Result<u64> {
+                Err(VaultError::Unsupported)
+            }
+            fn clear_if_unchanged(&self, _: u64) -> Result<()> {
+                Err(VaultError::Unsupported)
+            }
+        }
+
+        let dir = TestDir::new();
+        let state = fast_unlocked_with(&dir, Arc::new(SystemClock), Arc::new(UnsupportedClipboard));
+        let added = state.add_entry(input(1)).unwrap();
+        assert_eq!(state.copy_password(&added.id), Err(VaultError::Unsupported));
+        assert!(state.is_unlocked());
+        state.lock();
+        assert!(!state.is_unlocked());
     }
 
     // --- Poisoned lock ---

@@ -179,7 +179,7 @@ pub fn check_new_master_password(password: &SecretString) -> Result<()> {
     Ok(())
 }
 
-fn create_with_params(
+pub(crate) fn create_with_params(
     path: &Path,
     password: &SecretString,
     params: KdfParams,
@@ -347,6 +347,105 @@ fn encrypt_to_file_bytes(data: &VaultData, header: &Header, key: &Key) -> Result
 
 pub fn backup_path(path: &Path) -> PathBuf {
     sibling_with_suffix(path, ".bak")
+}
+
+/// `vault.quietkeys.pre-restore`, next to the vault. Holds the file that a restore replaced.
+pub fn pre_restore_path(path: &Path) -> PathBuf {
+    sibling_with_suffix(path, ".pre-restore")
+}
+
+/// Replaces the master password.
+///
+/// The current password is checked by deriving its key and decrypting the file (a mismatch
+/// is `DecryptFailed`). The new password must pass [`check_new_master_password`]. The new
+/// file uses a new salt and `params`. Any pending KDF upgrade is dropped, because this
+/// write already uses the parameters the caller asked for.
+///
+/// The backup is not updated here. [`change_master_password`] copies the new file over it
+/// immediately afterwards. A crash in between leaves the previous password able to open
+/// the backup until the next successful [`save`], which copies the current file over it.
+pub(crate) fn apply_new_master_key(
+    vault: &mut UnlockedVault,
+    path: &Path,
+    current: &SecretString,
+    new_password: &SecretString,
+    params: KdfParams,
+) -> Result<()> {
+    let bytes = fs::read(path)?;
+    let file = parse_vault_file(&bytes)?;
+    let header = file.header();
+    let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
+    let derived = crypto::derive_key(current, &salt, &header.kdf_params())?;
+    decrypt_file(&file, &derived)?;
+
+    check_new_master_password(new_password)?;
+    let (header, key) = new_header_and_key(new_password, params)?;
+    let new_bytes = encrypt_to_file_bytes(&vault.data, &header, &key)?;
+    write_atomic(path, &new_bytes)?;
+
+    vault.header = header;
+    vault.key = key;
+    vault.upgrade = None;
+    Ok(())
+}
+
+/// [`apply_new_master_key`] with the default Argon2 parameters, then copies that new file
+/// over the backup so the previous password cannot open either file.
+pub fn change_master_password(
+    vault: &mut UnlockedVault,
+    path: &Path,
+    current: &SecretString,
+    new_password: &SecretString,
+) -> Result<()> {
+    apply_new_master_key(vault, path, current, new_password, KdfParams::default())?;
+    let current_bytes = fs::read(path)?;
+    if !is_good_vault(&current_bytes, &vault.key) {
+        return Err(VaultError::Crypto);
+    }
+    write_atomic(&backup_path(path), &current_bytes)?;
+    Ok(())
+}
+
+/// Copies the encrypted vault file to `dest`. Refuses to overwrite anything, including
+/// the vault and its backup, because both already exist. Never decrypts.
+pub fn export_encrypted(vault_path: &Path, dest: &Path) -> Result<()> {
+    let bytes = fs::read(vault_path)?;
+    write_new(dest, &bytes)
+}
+
+/// Decrypts the backup, moves the current vault aside to [`pre_restore_path`], then puts
+/// the backup's bytes in its place. If the write fails, the moved file is put back.
+/// Does not touch the current vault when the backup is missing or the password is wrong.
+pub fn restore_replacing(vault_path: &Path, password: &SecretString) -> Result<UnlockedVault> {
+    let bak_path = backup_path(vault_path);
+    let bak_bytes = fs::read(&bak_path)?;
+    let file = parse_vault_file(&bak_bytes)?;
+    let header = file.header();
+    let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
+    let key = crypto::derive_key(password, &salt, &header.kdf_params())?;
+    let plaintext = decrypt_file(&file, &key)?;
+    let data: VaultData =
+        serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
+    let upgrade = prepare_upgrade(password, &header)?;
+
+    let had_current = vault_path.exists();
+    let aside = pre_restore_path(vault_path);
+    if had_current {
+        fs::rename(vault_path, &aside)?;
+    }
+    if let Err(err) = write_new(vault_path, &bak_bytes) {
+        if had_current {
+            let _ = fs::rename(&aside, vault_path);
+        }
+        return Err(err);
+    }
+
+    Ok(UnlockedVault {
+        header,
+        key,
+        data,
+        upgrade,
+    })
 }
 
 fn temp_path(path: &Path) -> PathBuf {
@@ -1080,6 +1179,186 @@ mod tests {
         assert!(!debug.contains("p@ss-1"));
         assert!(!debug.contains("some notes"));
         assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn rejected_new_master_password_leaves_the_file_unchanged() {
+        let dir = TestDir::new();
+        let mut vault = new_vault(&dir);
+        let before = fs::read(dir.vault_path()).unwrap();
+        let err = change_master_password(
+            &mut vault,
+            &dir.vault_path(),
+            &password(),
+            &SecretString::from("too short"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, VaultError::PasswordTooShort { .. }));
+        assert_eq!(fs::read(dir.vault_path()).unwrap(), before);
+        assert!(load(&dir.vault_path(), &password()).is_ok());
+    }
+
+    #[test]
+    fn wrong_current_password_does_not_rekey() {
+        let dir = TestDir::new();
+        let mut vault = new_vault(&dir);
+        let err = change_master_password(
+            &mut vault,
+            &dir.vault_path(),
+            &SecretString::from("not the current one"),
+            &SecretString::from("a brand new master password"),
+        )
+        .unwrap_err();
+        assert_eq!(err, VaultError::DecryptFailed);
+        assert!(load(&dir.vault_path(), &password()).is_ok());
+    }
+
+    #[test]
+    fn crash_between_vault_and_backup_is_repaired_by_the_next_save() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut vault = new_vault_with_entries(&dir);
+        let bak = backup_path(&path);
+        let bak_before = fs::read(&bak).unwrap();
+        let new_password = SecretString::from("a brand new master password");
+
+        // The vault file is rekeyed and the backup is intentionally not. That is the
+        // window a crash leaves behind.
+        apply_new_master_key(
+            &mut vault,
+            &path,
+            &password(),
+            &new_password,
+            KdfParams::fast(),
+        )
+        .unwrap();
+        assert!(!vault.needs_upgrade());
+        assert_eq!(fs::read(&bak).unwrap(), bak_before);
+        assert!(load(&bak, &password()).is_ok());
+        assert!(matches!(
+            load(&path, &password()),
+            Err(VaultError::DecryptFailed)
+        ));
+
+        save(&mut vault, &path).unwrap();
+        assert!(matches!(
+            load(&bak, &password()),
+            Err(VaultError::DecryptFailed)
+        ));
+        assert!(matches!(
+            load(&path, &password()),
+            Err(VaultError::DecryptFailed)
+        ));
+        assert!(load(&bak, &new_password).is_ok());
+        assert!(load(&path, &new_password).is_ok());
+    }
+
+    #[test]
+    fn change_master_password_uses_default_params_and_retires_the_old_password() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut created = create_with_params(&path, &password(), KdfParams::fast()).unwrap();
+        created.data.entries.push(sample_entry(1));
+        save(&mut created, &path).unwrap();
+
+        let mut vault = load(&path, &password()).unwrap();
+        assert!(vault.needs_upgrade());
+        let old_salt = vault.header().kdf.salt.clone();
+        let new_password = SecretString::from("a brand new master password");
+        change_master_password(&mut vault, &path, &password(), &new_password).unwrap();
+
+        assert!(!vault.needs_upgrade());
+        assert_ne!(vault.header().kdf.salt, old_salt);
+        let defaults = KdfParams::default();
+        assert_eq!(vault.header().kdf.m_kib, defaults.m_kib);
+        assert_eq!(vault.header().kdf.t, defaults.t);
+        assert_eq!(vault.header().kdf.p, defaults.p);
+
+        let bak = backup_path(&path);
+        assert!(matches!(
+            load(&path, &password()),
+            Err(VaultError::DecryptFailed)
+        ));
+        assert!(matches!(
+            load(&bak, &password()),
+            Err(VaultError::DecryptFailed)
+        ));
+        assert_eq!(load(&path, &new_password).unwrap().data.entries.len(), 1);
+        assert!(load(&bak, &new_password).is_ok());
+    }
+
+    #[test]
+    fn export_refuses_to_overwrite_and_stays_encrypted() {
+        let dir = TestDir::new();
+        let mut vault = new_vault_with_entries(&dir);
+        let path = dir.vault_path();
+        let dest = dir.0.join("copy.quietkeys");
+        export_encrypted(&path, &dest).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), fs::read(&path).unwrap());
+        let exported = fs::read(&dest).unwrap();
+        assert!(!exported
+            .windows(b"p@ss-1".len())
+            .any(|window| window == b"p@ss-1"));
+
+        assert_eq!(
+            export_encrypted(&path, &dest).unwrap_err(),
+            VaultError::Io(io::ErrorKind::AlreadyExists)
+        );
+        assert_eq!(
+            export_encrypted(&path, &path).unwrap_err(),
+            VaultError::Io(io::ErrorKind::AlreadyExists)
+        );
+        save(&mut vault, &path).unwrap();
+        assert_eq!(
+            export_encrypted(&path, &backup_path(&path)).unwrap_err(),
+            VaultError::Io(io::ErrorKind::AlreadyExists)
+        );
+    }
+
+    #[test]
+    fn a_mistaken_restore_can_be_undone_from_the_pre_restore_file() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut vault = new_vault(&dir);
+        vault.data.entries.push(sample_entry(1));
+        save(&mut vault, &path).unwrap();
+        // The backup is the empty vault. The file now has the entry.
+        vault.data.entries.push(sample_entry(2));
+        save(&mut vault, &path).unwrap();
+        let current = fs::read(&path).unwrap();
+
+        let restored = restore_replacing(&path, &password()).unwrap();
+        assert_eq!(restored.data.entries.len(), 1);
+        assert_eq!(fs::read(pre_restore_path(&path)).unwrap(), current);
+
+        // Putting the pre-restore file back undoes the restore.
+        fs::rename(pre_restore_path(&path), &path).unwrap();
+        let undone = load(&path, &password()).unwrap();
+        assert_eq!(undone.data.entries.len(), 2);
+    }
+
+    #[test]
+    fn a_wrong_restore_password_does_not_move_the_vault() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let _vault = new_vault_with_entries(&dir);
+        let before = fs::read(&path).unwrap();
+        let err = restore_replacing(&path, &SecretString::from("not the password"));
+        assert!(matches!(err, Err(VaultError::DecryptFailed)));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(!pre_restore_path(&path).exists());
+    }
+
+    #[test]
+    fn a_missing_backup_is_not_found_and_leaves_the_vault() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let _vault = new_vault(&dir);
+        let before = fs::read(&path).unwrap();
+        let err = restore_replacing(&path, &password());
+        assert!(matches!(err, Err(VaultError::Io(io::ErrorKind::NotFound))));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(!pre_restore_path(&path).exists());
     }
 
     #[cfg(unix)]

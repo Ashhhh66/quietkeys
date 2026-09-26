@@ -244,6 +244,8 @@ Work through one phase at a time. Do not start the next phase until every accept
 
 The unlock throttle is held in memory and resets when the app restarts; it slows guessing at the machine, while Argon2id protects a stolen vault file.
 
+**Known limitation:** changing the master password writes the vault file first and then copies those bytes over `vault.quietkeys.bak`. A crash between the two leaves the old password able to open the backup until the next successful save, which copies the current file over the backup and retires the old password there too.
+
 ## 7b. Git hygiene
 
 - `.gitignore` must exclude `*.quietkeys`, `*.bak`, `target/`, `node_modules/` and any test vault output.

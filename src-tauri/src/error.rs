@@ -32,8 +32,15 @@ pub enum VaultError {
     Throttled {
         seconds_remaining: u64,
     },
-    /// Another `create_vault`/`unlock` call is already running.
+    /// Another `create_vault`, `unlock`, `change_master_password`, or
+    /// `restore_from_backup` call is already running.
     Busy,
+    /// The vault is already unlocked, so a locked-only operation was refused.
+    AlreadyUnlocked,
+    /// Password generator options cannot produce a password.
+    InvalidGeneratorOptions(&'static str),
+    /// The platform cannot do this (clipboard on Linux).
+    Unsupported,
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -54,6 +61,9 @@ impl VaultError {
             VaultError::FieldTooLong { .. } => "field_too_long",
             VaultError::Throttled { .. } => "throttled",
             VaultError::Busy => "busy",
+            VaultError::AlreadyUnlocked => "already_unlocked",
+            VaultError::InvalidGeneratorOptions(_) => "invalid_generator_options",
+            VaultError::Unsupported => "unsupported",
             VaultError::Crypto => "crypto",
             VaultError::Io(_) => "io",
         }
@@ -90,7 +100,12 @@ impl fmt::Display for VaultError {
                 "Too many incorrect attempts. Try again in {seconds_remaining} seconds"
             ),
             VaultError::Busy => {
-                write!(f, "Another unlock or vault creation is already in progress")
+                write!(f, "Another vault operation is already in progress")
+            }
+            VaultError::AlreadyUnlocked => write!(f, "The vault is already unlocked"),
+            VaultError::InvalidGeneratorOptions(message) => write!(f, "{message}"),
+            VaultError::Unsupported => {
+                write!(f, "This operation is not supported on this system")
             }
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),

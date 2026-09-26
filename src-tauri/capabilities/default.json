@@ -15,6 +15,13 @@
     "allow-get-entry",
     "allow-add-entry",
     "allow-update-entry",
-    "allow-delete-entry"
+    "allow-delete-entry",
+    "allow-generate-password",
+    "allow-score-password",
+    "allow-change-master-password",
+    "allow-copy-password",
+    "allow-copy-username",
+    "allow-restore-from-backup",
+    "allow-export-vault"
   ]
 }

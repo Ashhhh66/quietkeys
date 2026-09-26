@@ -10,6 +10,13 @@ const COMMANDS: &[&str] = &[
     "add_entry",
     "update_entry",
     "delete_entry",
+    "generate_password",
+    "score_password",
+    "change_master_password",
+    "copy_password",
+    "copy_username",
+    "restore_from_backup",
+    "export_vault",
 ];
 
 fn main() {

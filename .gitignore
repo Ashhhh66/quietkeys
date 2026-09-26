@@ -1,6 +1,7 @@
 # Vault files and backups: never commit these, even encrypted
 *.quietkeys
 *.bak
+*.pre-restore
 *.tmp
 test-output/
 

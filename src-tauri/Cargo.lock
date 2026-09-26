@@ -2856,6 +2856,9 @@ dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
  "getrandom 0.4.3",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "rand",
  "secrecy",
  "serde",
@@ -2866,6 +2869,7 @@ dependencies = [
  "time",
  "unicode-normalization",
  "uuid",
+ "windows",
  "zeroize",
  "zxcvbn",
 ]
