@@ -3,6 +3,7 @@ pub mod commands;
 pub mod crypto;
 pub mod error;
 pub mod generator;
+pub mod health;
 pub mod state;
 pub mod vault;
 pub mod website;
@@ -54,6 +55,7 @@ pub fn run() {
             commands::clear_clipboard,
             commands::open_entry_website,
             commands::vault_info,
+            commands::vault_health,
             commands::show_vault_in_folder,
             commands::open_encryption_readme,
             commands::set_favourite,

@@ -7,6 +7,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::error::VaultError;
 use crate::generator::{self, GeneratedSecret, PassphraseOptions, PasswordOptions, PasswordScore};
+use crate::health::VaultHealth;
 use crate::state::{
     AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput, VaultInfo,
 };
@@ -188,6 +189,15 @@ pub fn clear_clipboard(state: State<'_, AppState>) -> CommandResult<()> {
 #[tauri::command]
 pub fn vault_info(state: State<'_, AppState>) -> CommandResult<VaultInfo> {
     state.vault_info()
+}
+
+/// Weak and reused logins. Scoring can take a while on a large vault, so it runs on a
+/// blocking thread and the window stays responsive. The report has no passwords or scores.
+#[tauri::command]
+pub async fn vault_health(app: AppHandle) -> CommandResult<VaultHealth> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().vault_health())
+        .await
+        .map_err(|_| VaultError::Crypto)?
 }
 
 /// Reveals the vault file itself. The UI sends no path, and the webview has no opener permission.

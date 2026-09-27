@@ -231,6 +231,29 @@ export type BackupStatus =
 
 export const vaultInfo = (): Promise<VaultInfo> => call("vault_info");
 
+export interface HealthLogin {
+  id: string;
+  title: string;
+  domain: string;
+  /** True when this login's own password is easy to guess. */
+  weak: boolean;
+}
+
+export interface HealthIssue {
+  kind: "weak" | "reused";
+  entries: HealthLogin[];
+}
+
+/** Counts and fix-list cards. No passwords or scores. */
+export interface VaultHealth {
+  strong: number;
+  weak: number;
+  reused: number;
+  issues: HealthIssue[];
+}
+
+export const vaultHealth = (): Promise<VaultHealth> => call("vault_health");
+
 /** Reveals the vault file. The UI sends no path. */
 export const showVaultInFolder = (): Promise<void> => call("show_vault_in_folder");
 

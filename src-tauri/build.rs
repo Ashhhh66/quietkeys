@@ -23,6 +23,7 @@ const COMMANDS: &[&str] = &[
     "clear_clipboard",
     "open_entry_website",
     "vault_info",
+    "vault_health",
     "show_vault_in_folder",
     "open_encryption_readme",
     "set_favourite",

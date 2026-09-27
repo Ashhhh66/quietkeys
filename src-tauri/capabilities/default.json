@@ -29,6 +29,7 @@
     "allow-clear-clipboard",
     "allow-open-entry-website",
     "allow-vault-info",
+    "allow-vault-health",
     "allow-show-vault-in-folder",
     "allow-open-encryption-readme",
     "allow-set-favourite",

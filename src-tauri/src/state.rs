@@ -2,6 +2,7 @@
 
 use std::mem;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
@@ -14,6 +15,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::clipboard::{self, ConcealedClipboard};
 use crate::error::{Result, VaultError};
+use crate::health::{self, VaultHealth};
 use crate::vault::{self, Entry, UnlockedVault, VaultData};
 
 /// After this many wrong passwords in a row, further attempts are delayed.
@@ -254,6 +256,14 @@ pub struct AppState {
     clipboard_clear_after: Duration,
     /// A copy updated `last_used_at` in memory and it has not been written yet.
     usage: Mutex<UsageState>,
+    /// Bumped when a title, username, URL, current password, or deleted state changes.
+    /// Starring, notes, and last-used leave it alone so health is not scored again.
+    health_generation: AtomicU64,
+    /// The last report, valid only while its generation still matches.
+    health_cache: Mutex<Option<(u64, VaultHealth)>>,
+    /// How many times scoring actually ran. Cache hits do not increment it.
+    #[cfg(test)]
+    health_scores: std::sync::atomic::AtomicUsize,
     /// Test rendezvous at the start of the new-key Argon2 derivation. Production leaves
     /// this empty, so the derivation is not delayed.
     #[cfg(test)]
@@ -290,6 +300,10 @@ impl AppState {
             copied_generation: Mutex::new(None),
             clipboard_clear_after,
             usage: Mutex::new(UsageState::default()),
+            health_generation: AtomicU64::new(0),
+            health_cache: Mutex::new(None),
+            #[cfg(test)]
+            health_scores: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             new_key_gate: Mutex::new(None),
         }
@@ -425,6 +439,7 @@ impl AppState {
         }
         self.clear_copied();
         *self.guard() = None;
+        self.clear_health_cache();
     }
 
     /// Verifies `current` by decrypting the vault file with it, then re-encrypts under
@@ -660,18 +675,22 @@ impl AppState {
 
     /// Wipes entries deleted more than 30 days ago and saves when that removes any.
     fn purge_deleted(&self) -> Result<()> {
-        self.with_vault(|vault, path| {
+        let purged = self.with_vault(|vault, path| {
             let snapshot = vault.data.clone();
             purge_expired(&mut vault.data, OffsetDateTime::now_utc());
             if vault.data.entries.len() == snapshot.entries.len() {
-                return Ok(());
+                return Ok(false);
             }
             if let Err(err) = vault::save(vault, path) {
                 vault.data = snapshot;
                 return Err(err);
             }
-            Ok(())
-        })
+            Ok(true)
+        })?;
+        if purged {
+            self.invalidate_health();
+        }
+        Ok(())
     }
 
     pub fn list_entries(&self) -> Result<Vec<EntrySummary>> {
@@ -714,7 +733,7 @@ impl AppState {
     }
 
     pub fn add_entry(&self, mut input: EntryInput) -> Result<EntrySummary> {
-        self.modify(|data| {
+        let summary = self.modify(|data| {
             input.check_lengths()?;
             let now = now_rfc3339()?;
             let entry = Entry {
@@ -734,16 +753,26 @@ impl AppState {
             let summary = EntrySummary::from(&entry);
             data.entries.push(entry);
             Ok(summary)
-        })
+        })?;
+        self.invalidate_health();
+        Ok(summary)
     }
 
     /// `input.password`: `None` keeps the entry's existing password; `Some(new)` replaces
     /// it. Every other field is always replaced.
     pub fn update_entry(&self, id: &str, mut input: UpdateEntryInput) -> Result<EntrySummary> {
-        self.modify(|data| {
+        let mut affects_health = false;
+        let summary = self.modify(|data| {
             input.check_lengths()?;
             let now = now_rfc3339()?;
             let entry = find_active_mut(data, id)?;
+            affects_health = entry.title != input.title
+                || entry.username != input.username
+                || entry.url != input.url
+                || input
+                    .password
+                    .as_ref()
+                    .is_some_and(|password| password != &entry.password);
             replace_wiping(&mut entry.title, mem::take(&mut input.title));
             replace_wiping(&mut entry.username, mem::take(&mut input.username));
             if let Some(password) = input.password.take() {
@@ -767,7 +796,11 @@ impl AppState {
             replace_wiping(&mut entry.notes, mem::take(&mut input.notes));
             entry.updated_at = now;
             Ok(EntrySummary::from(&*entry))
-        })
+        })?;
+        if affects_health {
+            self.invalidate_health();
+        }
+        Ok(summary)
     }
 
     /// Hides the entry. It stays encrypted until it is restored, deleted forever, or
@@ -777,15 +810,19 @@ impl AppState {
             let entry = find_active_mut(data, id)?;
             entry.deleted_at = Some(now_rfc3339()?);
             Ok(())
-        })
+        })?;
+        self.invalidate_health();
+        Ok(())
     }
 
     pub fn restore_entry(&self, id: &str) -> Result<EntrySummary> {
-        self.modify(|data| {
+        let summary = self.modify(|data| {
             let entry = find_deleted_mut(data, id)?;
             entry.deleted_at = None;
             Ok(EntrySummary::from(&*entry))
-        })
+        })?;
+        self.invalidate_health();
+        Ok(summary)
     }
 
     /// Removes a deleted entry and wipes it, including its password history.
@@ -798,7 +835,9 @@ impl AppState {
                 .ok_or(VaultError::EntryNotFound)?;
             data.entries.remove(index);
             Ok(())
-        })
+        })?;
+        self.invalidate_health();
+        Ok(())
     }
 
     /// Path, save times, backup health, and cipher names. No salts, nonces, or entry data.
@@ -823,6 +862,75 @@ impl AppState {
     /// Fails with `Locked` when the vault is locked. Used by commands that open nothing secret.
     pub fn ensure_unlocked(&self) -> Result<()> {
         self.with_vault(|_, _| Ok(()))
+    }
+
+    /// Weak and reused logins. Scoring runs on the caller's thread; the command puts that
+    /// on a blocking pool so the window stays responsive. A cached report is reused until
+    /// a title, username, URL, current password, or deleted state changes.
+    pub fn vault_health(&self) -> Result<VaultHealth> {
+        self.ensure_unlocked()?;
+        let generation = self.health_generation.load(Ordering::Acquire);
+        if let Some(report) = self.cached_health(generation) {
+            return Ok(report);
+        }
+        let inputs = self.health_snapshot()?;
+        #[cfg(test)]
+        self.health_scores
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let report = health::assess(&inputs);
+        if self.is_unlocked() && self.health_generation.load(Ordering::Acquire) == generation {
+            self.store_health(generation, report.clone());
+        }
+        Ok(report)
+    }
+
+    fn health_snapshot(&self) -> Result<Vec<health::CheckedLogin>> {
+        self.with_vault(|vault, _| {
+            Ok(vault
+                .data
+                .entries
+                .iter()
+                .map(|entry| health::CheckedLogin {
+                    id: entry.id.clone(),
+                    title: entry.title.clone(),
+                    username: entry.username.clone(),
+                    domain: crate::website::normalized_host(&entry.url).unwrap_or_default(),
+                    password: Zeroizing::new(entry.password.clone()),
+                    deleted: entry.deleted_at.is_some(),
+                })
+                .collect())
+        })
+    }
+
+    fn cached_health(&self, generation: u64) -> Option<VaultHealth> {
+        self.health_cache_guard()
+            .as_ref()
+            .filter(|(cached_generation, _)| *cached_generation == generation)
+            .map(|(_, report)| report.clone())
+    }
+
+    fn store_health(&self, generation: u64, report: VaultHealth) {
+        *self.health_cache_guard() = Some((generation, report));
+    }
+
+    fn invalidate_health(&self) {
+        self.health_generation.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn clear_health_cache(&self) {
+        *self.health_cache_guard() = None;
+    }
+
+    fn health_cache_guard(&self) -> MutexGuard<'_, Option<(u64, VaultHealth)>> {
+        match self.health_cache.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                *guard = None;
+                self.health_cache.clear_poison();
+                guard
+            }
+        }
     }
 
     /// Does not change `updated_at`. Favourites are not a content edit.
@@ -1083,6 +1191,7 @@ mod tests {
                 state.vault_path_to_reveal().map(drop),
             ),
             ("ensure_unlocked", state.ensure_unlocked()),
+            ("vault_health", state.vault_health().map(drop)),
         ]
     }
 
@@ -1166,6 +1275,107 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(!json.contains("backup-plaintext-should-not-leak"));
         assert!(!json.contains("secret-password"));
+    }
+
+    #[test]
+    fn vault_health_scores_once_until_a_password_title_or_url_changes() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        let mut created = input(1);
+        created.password = "password".into();
+        let added = state.add_entry(created).unwrap();
+        assert_eq!(
+            state
+                .health_scores
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+
+        let first = state.vault_health().unwrap();
+        assert_eq!(
+            state
+                .health_scores
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            first
+                .issues
+                .iter()
+                .flat_map(|issue| issue.entries.iter())
+                .find(|entry| entry.id == added.id)
+                .map(|entry| entry.domain.as_str()),
+            Some("site1.example.com")
+        );
+        let _ = state.vault_health().unwrap();
+        assert_eq!(
+            state
+                .health_scores
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+
+        state.set_favourite(&added.id, true).unwrap();
+        let _ = state.vault_health().unwrap();
+        assert_eq!(
+            state
+                .health_scores
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+
+        let mut notes = update_input(1);
+        notes.password = None;
+        notes.notes = "only notes".into();
+        state.update_entry(&added.id, notes).unwrap();
+        let _ = state.vault_health().unwrap();
+        assert_eq!(
+            state
+                .health_scores
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+
+        let mut renamed = update_input(1);
+        renamed.password = None;
+        renamed.title = "Renamed".into();
+        state.update_entry(&added.id, renamed).unwrap();
+        let _ = state.vault_health().unwrap();
+        assert_eq!(
+            state
+                .health_scores
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+    }
+
+    #[test]
+    fn vault_health_ignores_history_and_deleted_entries_and_hides_passwords() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        let mut first = input(1);
+        first.password = "shared-history-secret".into();
+        let kept = state.add_entry(first).unwrap();
+        let mut second = input(2);
+        second.password = "shared-history-secret".into();
+        let changed = state.add_entry(second).unwrap();
+        let mut edited = update_input(2);
+        edited.password = Some("brand-new-unique-secret".into());
+        state.update_entry(&changed.id, edited).unwrap();
+        state.delete_entry(&kept.id).unwrap();
+
+        let health = state.vault_health().unwrap();
+        assert_eq!(health.reused, 0);
+        assert!(health
+            .issues
+            .iter()
+            .all(|issue| issue.entries.iter().all(|entry| entry.id != kept.id)));
+        let json = serde_json::to_string(&health).unwrap();
+        assert!(!json.contains("shared-history-secret"));
+        assert!(!json.contains("brand-new-unique-secret"));
+        assert!(!json.contains("secret-password"));
+        assert!(!json.contains("score"));
+        assert!(!json.contains("guesses"));
     }
 
     #[test]

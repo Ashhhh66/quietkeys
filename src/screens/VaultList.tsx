@@ -3,6 +3,7 @@ import {
   Clock,
   Copy,
   ExternalLink,
+  HeartPulse,
   KeyRound,
   List,
   Lock,
@@ -30,28 +31,28 @@ import {
   listEntries,
   lock as apiLock,
   openEntryWebsite,
+  vaultHealth,
   restoreEntry,
   setFavourite,
   type EntryDetails,
   type EntrySummary,
+  type VaultHealth,
 } from "../api";
 import Avatar from "../components/Avatar";
 import ClipboardToast, { type ClipboardKind } from "../components/ClipboardToast";
 import CommandPalette from "../components/CommandPalette";
 import Kbd, { shortcutKeys, shortcutLabel } from "../components/Kbd";
 import { formatAutoLock, useIdleLock } from "../hooks/useIdleLock";
-import { usePasswordScore } from "../hooks/usePasswordScore";
 import {
   changedLabel,
   deletedAgoLabel,
   deletedRemainingLabel,
-  strengthIsWeak,
-  strengthLabel,
   usedLabel,
   usedUntilLabel,
 } from "../relativeTime";
 import EntryEditor, { type AppliedPassword } from "./EntryEditor";
 import Generator from "./Generator";
+import HealthScreen, { loginFlags } from "./Health";
 import SettingsScreen from "./Settings";
 
 interface Props {
@@ -62,7 +63,7 @@ const REVEAL_DURATION_MS = 30_000;
 const PASSWORD_MASK = "•".repeat(12);
 
 type SortOrder = "used" | "added" | "name" | "changed";
-type VaultNav = "all" | "favourites" | "recent" | "generator" | "settings" | "deleted";
+type VaultNav = "all" | "favourites" | "recent" | "generator" | "health" | "settings" | "deleted";
 type ClipboardNotice = { kind: ClipboardKind; startedAt: number };
 type UndoNotice = { id: string; title: string; startedAt: number };
 
@@ -87,6 +88,7 @@ function hasTextSelection(target: EventTarget | null): boolean {
 
 export default function VaultList({ onLocked }: Props) {
   const [entries, setEntries] = useState<EntrySummary[]>([]);
+  const [health, setHealth] = useState<VaultHealth | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortOrder>("used");
@@ -112,6 +114,11 @@ export default function VaultList({ onLocked }: Props) {
     } catch (err) {
       setError(isApiError(err) ? err.message : "Could not load entries");
     }
+    try {
+      setHealth(await vaultHealth());
+    } catch (err) {
+      setError(isApiError(err) ? err.message : "Could not check vault health");
+    }
   }
 
   // Fetches on mount. Written as its own inline, cancellable async call (rather than
@@ -125,6 +132,12 @@ export default function VaultList({ onLocked }: Props) {
         if (!cancelled) setEntries(result);
       } catch (err) {
         if (!cancelled) setError(isApiError(err) ? err.message : "Could not load entries");
+      }
+      try {
+        const report = await vaultHealth();
+        if (!cancelled) setHealth(report);
+      } catch (err) {
+        if (!cancelled) setError(isApiError(err) ? err.message : "Could not check vault health");
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -194,13 +207,17 @@ export default function VaultList({ onLocked }: Props) {
     visible.find((entry) => entry.id === selectedId) ??
     (editing === null && nav !== "deleted" ? (visible[0] ?? null) : null);
   const highlightedId = editing === "new" ? null : (editing ?? selected?.id ?? null);
-  const wide = (nav === "generator" || nav === "settings" || nav === "deleted") && editing === null;
+  const wide =
+    (nav === "generator" || nav === "health" || nav === "settings" || nav === "deleted") &&
+    editing === null;
 
   function selectEntry(id: string) {
     setSelectedId(id);
     setEditing(null);
     setGeneratorOverEditor(false);
-    setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
+    setNav((current) =>
+      current === "generator" || current === "health" || current === "settings" ? "all" : current,
+    );
   }
 
   useEffect(() => {
@@ -233,7 +250,11 @@ export default function VaultList({ onLocked }: Props) {
         e.preventDefault();
         setEditing("new");
         setGeneratorOverEditor(false);
-        setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
+        setNav((current) =>
+          current === "generator" || current === "health" || current === "settings"
+            ? "all"
+            : current,
+        );
       } else if (
         mod &&
         (key === "c" || key === "b") &&
@@ -313,7 +334,9 @@ export default function VaultList({ onLocked }: Props) {
   function startNewEntry() {
     setEditing("new");
     setGeneratorOverEditor(false);
-    setNav((current) => (current === "generator" || current === "settings" ? "all" : current));
+    setNav((current) =>
+      current === "generator" || current === "health" || current === "settings" ? "all" : current,
+    );
   }
 
   function noticeCopy(kind: ClipboardKind) {
@@ -381,6 +404,21 @@ export default function VaultList({ onLocked }: Props) {
         )}
       </div>
     );
+  } else if (nav === "health") {
+    details = health ? (
+      <HealthScreen
+        health={health}
+        onGenerate={(id) => {
+          setSelectedId(id);
+          setEditing(id);
+          setNav("all");
+          setGeneratorOverEditor(true);
+        }}
+        onOpen={openEntryWebsite}
+      />
+    ) : (
+      <p className="px-10 py-8 text-[14.5px] text-muted">Checking passwords…</p>
+    );
   } else if (nav === "generator") {
     details = (
       <Generator
@@ -400,6 +438,7 @@ export default function VaultList({ onLocked }: Props) {
       <EntryPanel
         key={`${selected.id}:${detailsVersion}`}
         entry={selected}
+        health={health}
         onEdit={() => setEditing(selected.id)}
         onDelete={() => handleDelete(selected)}
         onCopied={noticeCopy}
@@ -469,6 +508,17 @@ export default function VaultList({ onLocked }: Props) {
                 return;
               }
               setNav("generator");
+            }}
+          />
+          <NavItem
+            icon={HeartPulse}
+            label="Health"
+            count={health ? health.issues.length : undefined}
+            active={nav === "health"}
+            onClick={() => {
+              setNav("health");
+              setEditing(null);
+              setGeneratorOverEditor(false);
             }}
           />
           <NavItem
@@ -766,12 +816,14 @@ function NavItem({
 
 function EntryPanel({
   entry,
+  health,
   onEdit,
   onDelete,
   onCopied,
   onFavourite,
 }: {
   entry: EntrySummary;
+  health: VaultHealth | null;
   onEdit: () => void;
   onDelete: () => void;
   onCopied: (kind: ClipboardKind) => void;
@@ -784,7 +836,6 @@ function EntryPanel({
   const [copyError, setCopyError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const score = usePasswordScore(revealed ?? "");
 
   async function copy(which: ClipboardKind) {
     setCopyError(null);
@@ -838,7 +889,7 @@ function EntryPanel({
   }
 
   const host = entry.host ?? "";
-  const strength = score === null ? null : strengthLabel(score.score);
+  const flags = health ? loginFlags(health, entry.id) : null;
 
   async function openSite() {
     setOpenError(null);
@@ -968,13 +1019,19 @@ function EntryPanel({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {strength !== null && score !== null && (
-          <span
-            className={`rounded-full px-2.5 py-1 text-[12.5px] font-medium ${
-              strengthIsWeak(score.score) ? "bg-warn-bg text-warn-fg" : "bg-ok-bg text-ok-fg"
-            }`}
-          >
-            {strength}
+        {flags?.weak && (
+          <span className="rounded-full bg-warn-bg px-2.5 py-1 text-[12.5px] font-medium text-warn-fg">
+            Weak
+          </span>
+        )}
+        {flags?.reused && (
+          <span className="rounded-full bg-warn-bg px-2.5 py-1 text-[12.5px] font-medium text-warn-fg">
+            Reused
+          </span>
+        )}
+        {flags && !flags.weak && !flags.reused && (
+          <span className="rounded-full bg-ok-bg px-2.5 py-1 text-[12.5px] font-medium text-ok-fg">
+            Strong
           </span>
         )}
         {details && (

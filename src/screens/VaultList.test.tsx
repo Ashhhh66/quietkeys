@@ -24,6 +24,7 @@ vi.mock("../api", async () => {
     openEntryWebsite: vi.fn(),
     generatePassword: vi.fn(),
     scorePassword: vi.fn(),
+    vaultHealth: vi.fn(),
   };
 });
 
@@ -43,6 +44,7 @@ const clearClipboard = api.clearClipboard as unknown as ReturnType<typeof vi.fn>
 const openEntryWebsite = api.openEntryWebsite as unknown as ReturnType<typeof vi.fn>;
 const generatePassword = api.generatePassword as unknown as ReturnType<typeof vi.fn>;
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
+const vaultHealth = api.vaultHealth as unknown as ReturnType<typeof vi.fn>;
 
 const entries = [
   { id: "1", title: "GitHub", username: "octocat", url: "https://github.com" },
@@ -73,6 +75,12 @@ beforeEach(() => {
   openEntryWebsite.mockReset().mockResolvedValue(undefined);
   generatePassword.mockReset().mockResolvedValue({ value: "generated-secret", bits: 90 });
   scorePassword.mockReset().mockResolvedValue({ score: 3, warning: null, suggestions: [] });
+  vaultHealth.mockReset().mockResolvedValue({
+    strong: entries.length,
+    weak: 0,
+    reused: 0,
+    issues: [],
+  });
 });
 
 function entryList(): Promise<HTMLElement> {
@@ -399,5 +407,40 @@ describe("VaultList", () => {
     await user.click(screen.getByRole("button", { name: "Save as new login" }));
 
     expect(screen.getByLabelText("Password")).toHaveValue("generated-secret");
+  });
+
+  it("shows health from the same report on the sidebar, the fix list, and the details pills", async () => {
+    vaultHealth.mockResolvedValue({
+      strong: 0,
+      weak: 2,
+      reused: 2,
+      issues: [
+        {
+          kind: "reused",
+          entries: [
+            { id: "1", title: "GitHub", domain: "github.com", weak: true },
+            { id: "2", title: "Example Bank", domain: "bank.example.com", weak: false },
+          ],
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<VaultList onLocked={vi.fn()} />);
+    await within(await entryList()).findByText("GitHub");
+
+    const details = detailsPanel();
+    expect(await within(details).findByText("Weak")).toBeInTheDocument();
+    expect(within(details).getByText("Reused")).toBeInTheDocument();
+    expect(scorePassword).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /^Health/ }));
+    expect(screen.getByRole("heading", { name: "Health" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This password is used by 2 logins. Change it on each website, then update it here.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/easy to guess/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Health/ })).toHaveTextContent("1");
   });
 });

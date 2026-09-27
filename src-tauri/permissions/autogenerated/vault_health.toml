@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vault-health"
+description = "Enables the vault_health command without any pre-configured scope."
+commands.allow = ["vault_health"]
+
+[[permission]]
+identifier = "deny-vault-health"
+description = "Denies the vault_health command without any pre-configured scope."
+commands.deny = ["vault_health"]
