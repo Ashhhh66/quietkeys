@@ -44,6 +44,8 @@ pub enum VaultError {
     /// The stored website is not an http(s) URL we will open, or the OS could not open it.
     /// The message never includes the address, which may contain a query secret.
     WebsiteNotOpened,
+    /// The OS could not reveal the vault file. The message never includes the path.
+    VaultNotShown,
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -68,6 +70,7 @@ impl VaultError {
             VaultError::InvalidGeneratorOptions(_) => "invalid_generator_options",
             VaultError::Unsupported => "unsupported",
             VaultError::WebsiteNotOpened => "website_not_opened",
+            VaultError::VaultNotShown => "vault_not_shown",
             VaultError::Crypto => "crypto",
             VaultError::Io(_) => "io",
         }
@@ -112,6 +115,7 @@ impl fmt::Display for VaultError {
                 write!(f, "This operation is not supported on this system")
             }
             VaultError::WebsiteNotOpened => write!(f, "That address can't be opened."),
+            VaultError::VaultNotShown => write!(f, "The vault couldn't be shown in its folder."),
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),
         }

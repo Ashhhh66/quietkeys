@@ -8,7 +8,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::error::VaultError;
 use crate::generator::{self, GeneratedSecret, PassphraseOptions, PasswordOptions, PasswordScore};
 use crate::state::{
-    AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput,
+    AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput, VaultInfo,
 };
 
 type CommandResult<T> = Result<T, VaultError>;
@@ -184,6 +184,34 @@ pub fn clear_clipboard(state: State<'_, AppState>) -> CommandResult<()> {
     state.clear_clipboard()
 }
 
+/// Settings details for the open vault. The path is shortened. No secrets.
+#[tauri::command]
+pub fn vault_info(state: State<'_, AppState>) -> CommandResult<VaultInfo> {
+    state.vault_info()
+}
+
+/// Reveals the vault file itself. The UI sends no path, and the webview has no opener permission.
+#[tauri::command]
+pub fn show_vault_in_folder(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    let path = state.vault_path_to_reveal()?;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|_| VaultError::VaultNotShown)?;
+    Ok(())
+}
+
+const ENCRYPTION_README: &str = "https://github.com/Ashhhh66/quietkeys#security-design";
+
+/// Opens the security section of the README. The URL is fixed here; the UI does not send one.
+#[tauri::command]
+pub fn open_encryption_readme(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    state.ensure_unlocked()?;
+    app.opener()
+        .open_url(ENCRYPTION_README, None::<&str>)
+        .map_err(|_| VaultError::WebsiteNotOpened)?;
+    Ok(())
+}
+
 /// Opens the entry's stored website. The UI sends the entry id, never a URL.
 /// The opener plugin is called from here; the webview has no opener permission.
 #[tauri::command]
@@ -243,7 +271,7 @@ fn suggested_export_name(now: time::OffsetDateTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::suggested_export_name;
+    use super::{suggested_export_name, ENCRYPTION_README};
 
     #[test]
     fn suggested_export_name_uses_the_given_date() {
@@ -252,6 +280,14 @@ mod tests {
         assert_eq!(
             suggested_export_name(now),
             "quietkeys-backup-2026-09-26.quietkeys"
+        );
+    }
+
+    #[test]
+    fn encryption_readme_is_the_fixed_github_section() {
+        assert_eq!(
+            ENCRYPTION_README,
+            "https://github.com/Ashhhh66/quietkeys#security-design"
         );
     }
 }

@@ -98,6 +98,19 @@ fn check_field_length(field: &'static str, value: &str, max_chars: usize) -> Res
     }
 }
 
+/// What Settings may show about the vault file. No key material and no entry contents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultInfo {
+    /// Home folder shortened, so the username is not included.
+    pub path: String,
+    /// When the vault file was last written, RFC3339.
+    pub last_saved: String,
+    pub backup: vault::BackupStatus,
+    pub kdf: String,
+    pub cipher: String,
+}
+
 /// One row of the entry list. Deliberately has no password or notes field.
 /// `updated_at` is a timestamp and `host` is the normalised website host, never a secret.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -788,6 +801,30 @@ impl AppState {
         })
     }
 
+    /// Path, save times, backup health, and cipher names. No salts, nonces, or entry data.
+    pub fn vault_info(&self) -> Result<VaultInfo> {
+        self.with_vault(|vault, path| {
+            let last_saved = vault::mtime_rfc3339(path)?;
+            Ok(VaultInfo {
+                path: vault::display_vault_path(path),
+                last_saved,
+                backup: vault.backup_status(path),
+                kdf: vault.header().kdf.alg.clone(),
+                cipher: vault.header().cipher.alg.clone(),
+            })
+        })
+    }
+
+    /// The vault file Show in folder reveals. Not the path string shown in Settings.
+    pub fn vault_path_to_reveal(&self) -> Result<PathBuf> {
+        self.with_vault(|_, path| Ok(path.to_path_buf()))
+    }
+
+    /// Fails with `Locked` when the vault is locked. Used by commands that open nothing secret.
+    pub fn ensure_unlocked(&self) -> Result<()> {
+        self.with_vault(|_, _| Ok(()))
+    }
+
     /// Does not change `updated_at`. Favourites are not a content edit.
     pub fn set_favourite(&self, id: &str, favourite: bool) -> Result<EntrySummary> {
         self.modify(|data| {
@@ -1040,6 +1077,12 @@ mod tests {
                 "list_deleted_entries",
                 state.list_deleted_entries().map(drop),
             ),
+            ("vault_info", state.vault_info().map(drop)),
+            (
+                "vault_path_to_reveal",
+                state.vault_path_to_reveal().map(drop),
+            ),
+            ("ensure_unlocked", state.ensure_unlocked()),
         ]
     }
 
@@ -1069,6 +1112,60 @@ mod tests {
         state.add_entry(input(1)).unwrap();
         state.lock();
         assert_all_locked(&state);
+    }
+
+    #[test]
+    fn vault_info_reports_a_missing_backup_and_hides_the_real_path() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        let info = state.vault_info().unwrap();
+        assert_eq!(info.backup, vault::BackupStatus::Missing);
+        assert_eq!(info.kdf, "argon2id");
+        assert_eq!(info.cipher, "xchacha20poly1305");
+        assert_eq!(info.path, vault::display_vault_path(&dir.vault_path()));
+        assert_eq!(
+            info.last_saved,
+            vault::mtime_rfc3339(&dir.vault_path()).unwrap()
+        );
+        assert_eq!(state.vault_path_to_reveal().unwrap(), dir.vault_path());
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("salt"));
+        assert!(!json.contains("nonce"));
+        assert!(!json.contains("ciphertext"));
+        assert!(!json.contains("m_kib"));
+    }
+
+    #[test]
+    fn vault_info_is_healthy_only_when_the_backup_decrypts_with_the_memory_key() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        state.add_entry(input(1)).unwrap();
+        state.add_entry(input(2)).unwrap();
+        let info = state.vault_info().unwrap();
+        let bak = vault::backup_path(&dir.vault_path());
+        assert_eq!(
+            info.backup,
+            vault::BackupStatus::Healthy {
+                saved_at: vault::mtime_rfc3339(&bak).unwrap(),
+            }
+        );
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("secret-password-1"));
+        assert!(!json.contains("notes 1"));
+    }
+
+    #[test]
+    fn vault_info_reports_a_backup_that_cannot_be_opened_without_its_contents() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        state.add_entry(input(1)).unwrap();
+        let bak = vault::backup_path(&dir.vault_path());
+        fs::write(&bak, b"backup-plaintext-should-not-leak").unwrap();
+        let info = state.vault_info().unwrap();
+        assert_eq!(info.backup, vault::BackupStatus::Unreadable);
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(!json.contains("backup-plaintext-should-not-leak"));
+        assert!(!json.contains("secret-password"));
     }
 
     #[test]

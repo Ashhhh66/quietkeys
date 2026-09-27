@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agoLabel,
   changedLabel,
   deletedAgoLabel,
   deletedRemainingLabel,
@@ -18,6 +19,14 @@ describe("changedLabel", () => {
     expect(changedLabel("2026-09-20T08:00:00Z", NOW)).toBe("Changed 6 days ago");
     expect(changedLabel("2026-06-26T08:00:00Z", NOW)).toBe("Changed 3 months ago");
     expect(changedLabel("2024-09-26T08:00:00Z", NOW)).toBe("Changed 2 years ago");
+  });
+});
+
+describe("agoLabel", () => {
+  it("counts minutes and hours from a pinned clock", () => {
+    expect(agoLabel("2026-09-26T11:58:00Z", NOW)).toBe("2 min ago");
+    expect(agoLabel("2026-09-26T11:59:30Z", NOW)).toBe("just now");
+    expect(agoLabel("2026-09-26T09:00:00Z", NOW)).toBe("3 hours ago");
   });
 });
 

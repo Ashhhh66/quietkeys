@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, Shield } from "lucide-react";
 import {
   readDensity,
   readTextSize,
@@ -9,7 +9,17 @@ import {
   type Density,
   type TextSize,
 } from "../appearance";
-import { changeMasterPassword, exportVault, friendlyMessage, isApiError } from "../api";
+import {
+  changeMasterPassword,
+  exportVault,
+  friendlyMessage,
+  isApiError,
+  openEncryptionReadme,
+  showVaultInFolder,
+  vaultInfo,
+  type BackupStatus,
+  type VaultInfo,
+} from "../api";
 import {
   AUTO_LOCK_CHOICES,
   readAutoLockMinutes,
@@ -20,6 +30,7 @@ import PasswordChecklist, { passwordChecklistPasses } from "../components/Passwo
 import StrengthMeter from "../components/StrengthMeter";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import ThemeSwitch from "../components/ThemeSwitch";
+import { agoLabel } from "../relativeTime";
 
 const LABEL = "block text-[12px] font-semibold tracking-[0.06em] text-label uppercase";
 const INPUT =
@@ -39,6 +50,9 @@ export default function Settings() {
   const [density, setDensityChoice] = useState<Density>(readDensity);
   const [textSize, setTextSizeChoice] = useState<TextSize>(readTextSize);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [info, setInfo] = useState<VaultInfo | null>(null);
+  const [infoError, setInfoError] = useState<string | null>(null);
+  const [showError, setShowError] = useState<string | null>(null);
 
   const canChange = passwordChecklistPasses(next, confirm) && current.length > 0 && !submitting;
 
@@ -50,6 +64,13 @@ export default function Settings() {
       })
       .catch(() => {
         if (!cancelled) setVersion("");
+      });
+    vaultInfo()
+      .then((value) => {
+        if (!cancelled) setInfo(value);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setInfoError(friendlyMessage(err));
       });
     return () => {
       cancelled = true;
@@ -93,164 +114,275 @@ export default function Settings() {
     }
   }
 
+  async function showInFolder() {
+    setShowError(null);
+    try {
+      await showVaultInFolder();
+    } catch (err) {
+      setShowError(friendlyMessage(err));
+    }
+  }
+
+  async function openHowItWorks() {
+    setShowError(null);
+    try {
+      await openEncryptionReadme();
+    } catch (err) {
+      setShowError(friendlyMessage(err));
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6 px-10 py-8">
       <h2 className="text-[28px] font-semibold tracking-[-0.02em]">Settings</h2>
 
-      <form
-        onSubmit={handleChange}
-        className="flex max-w-[640px] flex-col gap-4 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4"
-      >
-        <h3 className="text-[16px] font-semibold">Change master password</h3>
-        <Field
-          id="current-master-password"
-          label="Current password"
-          value={current}
-          autoComplete="current-password"
-          onChange={setCurrent}
-        />
-        <Field
-          id="new-master-password"
-          label="New password"
-          value={next}
-          autoComplete="new-password"
-          onChange={setNext}
-        />
-        <StrengthMeter password={next} />
-        <Field
-          id="confirm-master-password"
-          label="Confirm new password"
-          value={confirm}
-          autoComplete="new-password"
-          onChange={setConfirm}
-        />
-        <PasswordChecklist password={next} confirm={confirm} />
-        {error && (
-          <p
-            role="alert"
-            className="rounded-[10px] border border-error-border bg-error-bg px-3.5 py-3 text-[13.5px] text-error-fg"
-          >
-            {error}
+      <section className="flex max-w-[860px] flex-col gap-4 rounded-[20px] border border-ok-fg bg-ok-bg px-6 py-5">
+        <div className="flex items-start gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-[12px] bg-accent-gradient text-on-accent">
+            <Shield size={18} strokeWidth={2} aria-hidden />
+          </span>
+          <div>
+            <h3 className="text-[18px] font-semibold">Where your data lives</h3>
+            <p className="mt-1 text-[14px] text-text-soft">
+              Everything stays on this computer. Nothing is ever uploaded.
+            </p>
+          </div>
+        </div>
+        {infoError && (
+          <p role="alert" className="text-[13.5px] text-error-fg">
+            {infoError}
           </p>
         )}
-        {success && (
-          <p role="status" className="rounded-[10px] bg-ok-bg px-3.5 py-3 text-[13.5px] text-ok-fg">
-            {success}
+        {info && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <InfoCell title="Vault file">
+              <p className="font-mono text-[13px] break-all text-text">{info.path}</p>
+              <button
+                type="button"
+                onClick={() => void showInFolder()}
+                className="mt-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg"
+              >
+                Show in folder
+              </button>
+            </InfoCell>
+            <InfoCell title="Last saved">
+              <p className="text-[14.5px] text-text">{agoLabel(info.lastSaved)}</p>
+            </InfoCell>
+            <InfoCell title="Backup">
+              <p className="text-[14.5px] text-text">{backupLabel(info.backup)}</p>
+              <button
+                type="button"
+                onClick={() => void handleExport()}
+                disabled={exporting}
+                className="mt-2 h-8 rounded-[10px] bg-accent-gradient px-3 text-[13px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
+              >
+                {exporting ? "Exporting…" : "Export a copy"}
+              </button>
+              {exportError && (
+                <p role="alert" className="mt-2 text-[13.5px] text-error-fg">
+                  {exportError}
+                </p>
+              )}
+            </InfoCell>
+            <InfoCell title="Encryption">
+              <p className="text-[14.5px] text-text">{algorithmLabel(info.kdf, info.cipher)}</p>
+              <button
+                type="button"
+                onClick={() => void openHowItWorks()}
+                className="mt-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-accent-text hover:bg-nav-active-bg"
+              >
+                How it works
+              </button>
+            </InfoCell>
+          </div>
+        )}
+        {showError && (
+          <p role="alert" className="text-[13.5px] text-error-fg">
+            {showError}
           </p>
         )}
-        <button
-          type="submit"
-          disabled={!canChange}
-          className="flex h-10 items-center justify-center gap-2 rounded-[12px] bg-accent-gradient text-[14px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
-        >
-          {submitting && (
-            <LoaderCircle size={18} strokeWidth={2} aria-hidden className="animate-spin" />
-          )}
-          {submitting ? "Changing…" : "Change master password"}
-        </button>
-      </form>
-
-      <section className="flex max-w-[640px] flex-col gap-3 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
-        <h3 className="text-[16px] font-semibold">Auto-lock</h3>
-        <fieldset className="flex flex-col gap-2">
-          <legend className="sr-only">Lock after</legend>
-          {AUTO_LOCK_CHOICES.map((choice) => (
-            <label key={choice} className="flex h-10 items-center gap-3 text-[14px]">
-              <input
-                type="radio"
-                name="auto-lock"
-                checked={minutes === choice}
-                onChange={() => {
-                  setMinutes(choice);
-                  writeAutoLockMinutes(choice);
-                }}
-              />
-              {choice} {choice === 1 ? "minute" : "minutes"}
-            </label>
-          ))}
-        </fieldset>
       </section>
 
-      <section className="max-w-[640px] rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
-        <h3 className="mb-2 text-[16px] font-semibold">Theme</h3>
-        <ThemeSwitch />
-      </section>
+      <div className="grid max-w-[860px] gap-3 lg:grid-cols-2">
+        <section className="flex flex-col gap-4 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+          <h3 className="text-[16px] font-semibold">Security</h3>
+          <div>
+            <p className={LABEL}>Auto-lock</p>
+            <div
+              role="radiogroup"
+              aria-label="Auto-lock"
+              className="mt-2 flex rounded-[12px] border border-panel-border bg-panel p-1"
+            >
+              {AUTO_LOCK_CHOICES.map((choice) => (
+                <button
+                  key={choice}
+                  type="button"
+                  role="radio"
+                  aria-checked={minutes === choice}
+                  onClick={() => {
+                    setMinutes(choice);
+                    writeAutoLockMinutes(choice);
+                  }}
+                  className={`h-8 flex-1 rounded-[8px] text-[13px] font-medium ${
+                    minutes === choice
+                      ? "bg-accent-gradient text-on-accent"
+                      : "text-text-soft hover:bg-nav-active-bg"
+                  }`}
+                >
+                  {choice}m
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3 text-[14px]">
+            <span>Clear clipboard</span>
+            <span className="text-muted">30 seconds</span>
+          </div>
+          <form onSubmit={handleChange} className="flex flex-col gap-4">
+            <h4 className="text-[14px] font-semibold">Master password</h4>
+            <Field
+              id="current-master-password"
+              label="Current password"
+              value={current}
+              autoComplete="current-password"
+              onChange={setCurrent}
+            />
+            <Field
+              id="new-master-password"
+              label="New password"
+              value={next}
+              autoComplete="new-password"
+              onChange={setNext}
+            />
+            <StrengthMeter password={next} />
+            <Field
+              id="confirm-master-password"
+              label="Confirm new password"
+              value={confirm}
+              autoComplete="new-password"
+              onChange={setConfirm}
+            />
+            <PasswordChecklist password={next} confirm={confirm} />
+            {error && (
+              <p
+                role="alert"
+                className="rounded-[10px] border border-error-border bg-error-bg px-3.5 py-3 text-[13.5px] text-error-fg"
+              >
+                {error}
+              </p>
+            )}
+            {success && (
+              <p
+                role="status"
+                className="rounded-[10px] bg-ok-bg px-3.5 py-3 text-[13.5px] text-ok-fg"
+              >
+                {success}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={!canChange}
+              className="flex h-10 items-center justify-center gap-2 rounded-[12px] bg-accent-gradient text-[14px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
+            >
+              {submitting && (
+                <LoaderCircle size={18} strokeWidth={2} aria-hidden className="animate-spin" />
+              )}
+              {submitting ? "Changing…" : "Change master password"}
+            </button>
+          </form>
+        </section>
 
-      <section className="flex max-w-[640px] flex-col gap-4 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
-        <h3 className="text-[16px] font-semibold">Appearance</h3>
-        <fieldset className="flex flex-col gap-2">
-          <legend className={LABEL}>Density</legend>
-          {(
-            [
-              ["comfortable", "Comfortable"],
-              ["compact", "Compact"],
-            ] as const
-          ).map(([value, label]) => (
-            <label key={value} className="flex items-center gap-2 text-[14.5px] text-text">
-              <input
-                type="radio"
-                name="density"
-                checked={density === value}
-                onChange={() => {
-                  setDensity(value);
-                  setDensityChoice(value);
-                }}
-              />
-              {label}
-            </label>
-          ))}
-        </fieldset>
-        <fieldset className="flex flex-col gap-2">
-          <legend className={LABEL}>Text size</legend>
-          {(
-            [
-              ["a", "A"],
-              ["a+", "A+"],
-              ["a++", "A++"],
-            ] as const
-          ).map(([value, label]) => (
-            <label key={value} className="flex items-center gap-2 text-[14.5px] text-text">
-              <input
-                type="radio"
-                name="text-size"
-                checked={textSize === value}
-                onChange={() => {
-                  setTextSize(value);
-                  setTextSizeChoice(value);
-                }}
-              />
-              {label}
-            </label>
-          ))}
-        </fieldset>
+        <section className="flex flex-col gap-4 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+          <h3 className="text-[16px] font-semibold">Appearance</h3>
+          <div>
+            <p className={LABEL}>Theme</p>
+            <ThemeSwitch />
+          </div>
+          <fieldset className="flex flex-col gap-2">
+            <legend className={LABEL}>Density</legend>
+            {(
+              [
+                ["comfortable", "Comfortable"],
+                ["compact", "Compact"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex items-center gap-2 text-[14.5px] text-text">
+                <input
+                  type="radio"
+                  name="density"
+                  checked={density === value}
+                  onChange={() => {
+                    setDensity(value);
+                    setDensityChoice(value);
+                  }}
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+          <fieldset className="flex flex-col gap-2">
+            <legend className={LABEL}>Text size</legend>
+            {(
+              [
+                ["a", "A"],
+                ["a+", "A+"],
+                ["a++", "A++"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex items-center gap-2 text-[14.5px] text-text">
+                <input
+                  type="radio"
+                  name="text-size"
+                  checked={textSize === value}
+                  onChange={() => {
+                    setTextSize(value);
+                    setTextSizeChoice(value);
+                  }}
+                />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+        </section>
+      </div>
+
+      <footer className="flex max-w-[860px] items-center justify-between gap-4">
+        <p className="text-[13px] text-muted">
+          <span>{version ? `Version ${version}` : "quietkeys"}</span>
+          <span> · MIT</span>
+        </p>
         <button
           type="button"
           onClick={() => setShortcutsOpen(true)}
-          className="flex h-10 w-fit items-center rounded-[12px] border border-panel-border bg-panel px-4 text-[14px] font-medium text-text hover:bg-nav-active-bg"
+          className="flex h-10 items-center rounded-[12px] border border-panel-border bg-panel px-4 text-[14px] font-medium text-text hover:bg-nav-active-bg"
         >
           Keyboard shortcuts
         </button>
-      </section>
-
-      <section className="flex max-w-[640px] flex-col gap-3 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
-        <h3 className="text-[16px] font-semibold">Export backup</h3>
-        <button
-          type="button"
-          onClick={() => void handleExport()}
-          disabled={exporting}
-          className="flex h-10 w-fit items-center rounded-[12px] bg-accent-gradient px-4 text-[14px] font-semibold text-on-accent hover:opacity-95 disabled:bg-disabled-bg disabled:bg-none disabled:text-disabled-fg disabled:opacity-100"
-        >
-          {exporting ? "Exporting…" : "Export backup"}
-        </button>
-        {exportError && (
-          <p role="alert" className="text-[13.5px] text-error-fg">
-            {exportError}
-          </p>
-        )}
-      </section>
-
-      {version && <p className="text-[13px] text-muted">Version {version}</p>}
+      </footer>
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
+    </div>
+  );
+}
+
+function backupLabel(backup: BackupStatus): string {
+  if (backup.status === "missing") return "No backup yet";
+  if (backup.status === "unreadable") {
+    return "Backup can't be opened. Your next save will replace it.";
+  }
+  return `Healthy · saved ${agoLabel(backup.savedAt)}`;
+}
+
+function algorithmLabel(kdf: string, cipher: string): string {
+  const kdfName = kdf === "argon2id" ? "Argon2id" : kdf;
+  const cipherName = cipher === "xchacha20poly1305" ? "XChaCha20-Poly1305" : cipher;
+  return `${kdfName} · ${cipherName}`;
+}
+
+function InfoCell({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="rounded-[14px] border border-panel-border bg-panel px-4 py-3">
+      <h4 className="text-[12px] font-semibold tracking-[0.06em] text-label uppercase">{title}</h4>
+      <div className="mt-2">{children}</div>
     </div>
   );
 }

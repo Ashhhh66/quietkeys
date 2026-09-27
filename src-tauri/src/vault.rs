@@ -8,13 +8,16 @@
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::crypto::{self, KdfParams, Key, NONCE_LEN, SALT_LEN};
@@ -185,6 +188,11 @@ impl UnlockedVault {
     /// re-encrypted with a new salt and the default params on the next save.
     pub fn needs_upgrade(&self) -> bool {
         self.upgrade.is_some()
+    }
+
+    /// Opens the `.bak` beside `vault_path` with this vault's key. No Argon2.
+    pub fn backup_status(&self, vault_path: &Path) -> BackupStatus {
+        backup_status(vault_path, &self.key)
     }
 }
 
@@ -395,6 +403,101 @@ fn encrypt_to_file_bytes(data: &VaultData, header: &Header, key: &Key) -> Result
 
 pub fn backup_path(path: &Path) -> PathBuf {
     sibling_with_suffix(path, ".bak")
+}
+
+/// Whether `vault.quietkeys.bak` can be opened with the key already in memory.
+/// Decryption uses that key and the backup's own nonce. It does not run Argon2,
+/// and the plaintext is wiped rather than returned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "status")]
+pub enum BackupStatus {
+    Missing,
+    Healthy { saved_at: String },
+    Unreadable,
+}
+
+pub fn backup_status(vault_path: &Path, key: &Key) -> BackupStatus {
+    let path = backup_path(vault_path);
+    if !path.exists() {
+        return BackupStatus::Missing;
+    }
+    let Ok(bytes) = fs::read(&path) else {
+        return BackupStatus::Unreadable;
+    };
+    // `is_good_vault` drops the decrypted bytes. Nothing from them is returned.
+    if !is_good_vault(&bytes, key) {
+        return BackupStatus::Unreadable;
+    }
+    match mtime_rfc3339(&path) {
+        Ok(saved_at) => BackupStatus::Healthy { saved_at },
+        Err(_) => BackupStatus::Unreadable,
+    }
+}
+
+pub(crate) fn mtime_rfc3339(path: &Path) -> Result<String> {
+    let modified = fs::metadata(path)?.modified()?;
+    system_time_rfc3339(modified)
+}
+
+fn system_time_rfc3339(modified: SystemTime) -> Result<String> {
+    OffsetDateTime::from(modified)
+        .format(&Rfc3339)
+        .map_err(|_| VaultError::InvalidFormat)
+}
+
+/// Which folder to hide when showing the vault path. The username lives in that folder.
+#[derive(Clone, Copy)]
+enum DisplayRoot {
+    /// `%LOCALAPPDATA%\...` on Windows. Constructed only on that OS.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    LocalAppData,
+    /// `~/...` on macOS. Constructed only on that OS. Tests still build both styles.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    Home,
+}
+
+/// Replaces `root` at the start of `path`. `None` when `path` is not inside `root`.
+fn shorten_display_path(path: &Path, root: &Path, style: DisplayRoot) -> Option<String> {
+    let rest = path.strip_prefix(root).ok()?;
+    let mut parts = Vec::new();
+    for component in rest.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let (prefix, sep) = match style {
+        DisplayRoot::LocalAppData => ("%LOCALAPPDATA%", "\\"),
+        DisplayRoot::Home => ("~", "/"),
+    };
+    Some(format!("{prefix}{sep}{}", parts.join(sep)))
+}
+
+/// The path shown in Settings. The real path is kept for Show in folder.
+pub fn display_vault_path(path: &Path) -> String {
+    let shortened =
+        display_root().and_then(|(root, style)| shorten_display_path(path, &root, style));
+    shortened.unwrap_or_else(|| path.display().to_string())
+}
+
+fn display_root() -> Option<(PathBuf, DisplayRoot)> {
+    #[cfg(windows)]
+    {
+        std::env::var_os("LOCALAPPDATA")
+            .map(|value| (PathBuf::from(value), DisplayRoot::LocalAppData))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME").map(|value| (PathBuf::from(value), DisplayRoot::Home))
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        None
+    }
 }
 
 /// `vault.quietkeys.v1-backup`, next to the vault. Written once, the first time a
@@ -1560,6 +1663,29 @@ mod tests {
         assert!(matches!(err, Err(VaultError::Io(io::ErrorKind::NotFound))));
         assert_eq!(fs::read(&path).unwrap(), before);
         assert!(!pre_restore_path(&path).exists());
+    }
+
+    #[test]
+    fn display_path_hides_the_username() {
+        let windows = Path::new(r"C:\Users\ada\AppData\Local\com.quietkeys.app\vault.quietkeys");
+        let local = Path::new(r"C:\Users\ada\AppData\Local");
+        let shown = shorten_display_path(windows, local, DisplayRoot::LocalAppData).unwrap();
+        assert_eq!(shown, r"%LOCALAPPDATA%\com.quietkeys.app\vault.quietkeys");
+        assert!(!shown.contains("ada"));
+        assert!(!shown.contains("Users"));
+
+        let mac =
+            Path::new("/Users/ada/Library/Application Support/com.quietkeys.app/vault.quietkeys");
+        let home = Path::new("/Users/ada");
+        let shown = shorten_display_path(mac, home, DisplayRoot::Home).unwrap();
+        assert_eq!(
+            shown,
+            "~/Library/Application Support/com.quietkeys.app/vault.quietkeys"
+        );
+        assert!(!shown.contains("ada"));
+
+        let elsewhere = Path::new(r"D:\vaults\vault.quietkeys");
+        assert!(shorten_display_path(elsewhere, local, DisplayRoot::LocalAppData).is_none());
     }
 
     #[cfg(unix)]

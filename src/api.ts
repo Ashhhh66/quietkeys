@@ -216,6 +216,27 @@ export const clearClipboard = (): Promise<void> => call("clear_clipboard");
 /** Opens the entry's stored website. The UI sends the id, never a URL. */
 export const openEntryWebsite = (id: string): Promise<void> => call("open_entry_website", { id });
 
+export interface VaultInfo {
+  /** Home folder shortened, so the username is not included. */
+  path: string;
+  /** RFC3339. Not a secret. */
+  lastSaved: string;
+  backup: BackupStatus;
+  kdf: string;
+  cipher: string;
+}
+
+export type BackupStatus =
+  { status: "missing" } | { status: "healthy"; savedAt: string } | { status: "unreadable" };
+
+export const vaultInfo = (): Promise<VaultInfo> => call("vault_info");
+
+/** Reveals the vault file. The UI sends no path. */
+export const showVaultInFolder = (): Promise<void> => call("show_vault_in_folder");
+
+/** Opens the fixed security section of the README. The UI sends no URL. */
+export const openEncryptionReadme = (): Promise<void> => call("open_encryption_readme");
+
 export const setFavourite = (id: string, favourite: boolean): Promise<EntrySummary> =>
   call("set_favourite", { id, favourite });
 

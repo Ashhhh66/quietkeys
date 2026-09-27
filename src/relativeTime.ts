@@ -12,6 +12,18 @@ export function changedLabel(iso: string, now = Date.now()): string {
   return `Changed ${years} ${years === 1 ? "year" : "years"} ago`;
 }
 
+/** "2 min ago", counted from `now` so tests can pin the clock. */
+export function agoLabel(iso: string, now = Date.now()): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "some time ago";
+  const minutes = Math.max(0, Math.floor((now - then) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  return changedLabel(iso, now).replace(/^Changed /, "");
+}
+
 /** "Used today", counted from `now` so tests can pin the clock. */
 export function usedLabel(iso: string, now = Date.now()): string {
   return changedLabel(iso, now).replace(/^Changed/, "Used");

@@ -15,12 +15,30 @@ vi.mock("../api", async () => {
     scorePassword: vi.fn(),
     changeMasterPassword: vi.fn(),
     exportVault: vi.fn(),
+    vaultInfo: vi.fn(),
+    showVaultInFolder: vi.fn(),
+    openEncryptionReadme: vi.fn(),
   };
 });
 
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
 const exportVault = api.exportVault as unknown as ReturnType<typeof vi.fn>;
 const changeMasterPassword = api.changeMasterPassword as unknown as ReturnType<typeof vi.fn>;
+const vaultInfo = api.vaultInfo as unknown as ReturnType<typeof vi.fn>;
+const showVaultInFolder = api.showVaultInFolder as unknown as ReturnType<typeof vi.fn>;
+const openEncryptionReadme = api.openEncryptionReadme as unknown as ReturnType<typeof vi.fn>;
+
+let savedAt = new Date(Date.now() - 2 * 60_000).toISOString();
+
+function info(backup: api.BackupStatus) {
+  return {
+    path: "%LOCALAPPDATA%\\com.quietkeys.app\\vault.quietkeys",
+    lastSaved: savedAt,
+    backup,
+    kdf: "argon2id",
+    cipher: "xchacha20poly1305",
+  };
+}
 
 beforeEach(() => {
   scorePassword
@@ -28,6 +46,10 @@ beforeEach(() => {
     .mockResolvedValue({ score: 2, warning: "Short", suggestions: ["Add words"] });
   exportVault.mockReset();
   changeMasterPassword.mockReset();
+  savedAt = new Date(Date.now() - 2 * 60_000).toISOString();
+  vaultInfo.mockReset().mockResolvedValue(info({ status: "healthy", savedAt }));
+  showVaultInFolder.mockReset().mockResolvedValue(undefined);
+  openEncryptionReadme.mockReset().mockResolvedValue(undefined);
 });
 
 describe("Settings", () => {
@@ -52,7 +74,7 @@ describe("Settings", () => {
     });
     const user = userEvent.setup();
     render(<Settings />);
-    await user.click(screen.getByRole("button", { name: "Export backup" }));
+    await user.click(await screen.findByRole("button", { name: "Export a copy" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "A file with that name already exists. Choose a different name.",
     );
@@ -96,6 +118,36 @@ describe("Settings", () => {
     document.documentElement.style.fontSize = "";
     localStorage.removeItem("quietkeys.density");
     localStorage.removeItem("quietkeys.textSize");
+  });
+
+  it("shows a healthy backup and reveals the vault without sending a path", async () => {
+    const user = userEvent.setup();
+    render(<Settings />);
+    expect(
+      await screen.findByText("%LOCALAPPDATA%\\com.quietkeys.app\\vault.quietkeys"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Healthy · saved 2 min ago")).toBeInTheDocument();
+    expect(screen.getByText("Argon2id · XChaCha20-Poly1305")).toBeInTheDocument();
+    expect(screen.queryByText(/ada|Users\\/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show in folder" }));
+    expect(showVaultInFolder).toHaveBeenCalledWith();
+    await user.click(screen.getByRole("button", { name: "How it works" }));
+    expect(openEncryptionReadme).toHaveBeenCalledWith();
+  });
+
+  it("says when there is no backup", async () => {
+    vaultInfo.mockResolvedValue(info({ status: "missing" }));
+    render(<Settings />);
+    expect(await screen.findByText("No backup yet")).toBeInTheDocument();
+  });
+
+  it("says when the backup cannot be opened", async () => {
+    vaultInfo.mockResolvedValue(info({ status: "unreadable" }));
+    render(<Settings />);
+    expect(
+      await screen.findByText("Backup can't be opened. Your next save will replace it."),
+    ).toBeInTheDocument();
   });
 
   it("opens the keyboard shortcuts list", async () => {
