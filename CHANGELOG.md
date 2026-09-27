@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- On Linux, Settings shortens the home folder to `~/`, the same way macOS does, so the username stays off screen.
+
 ## [1.1.0] - [RELEASE DATE]
 
 ### Added

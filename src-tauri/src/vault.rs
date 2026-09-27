@@ -8,7 +8,7 @@
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -451,21 +451,55 @@ enum DisplayRoot {
     /// `%LOCALAPPDATA%\...` on Windows. Constructed only on that OS.
     #[cfg_attr(not(windows), allow(dead_code))]
     LocalAppData,
-    /// `~/...` on macOS. Constructed only on that OS. Tests still build both styles.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    /// `~/...` on macOS and Linux. Tests still build this style on Windows.
+    #[cfg_attr(windows, allow(dead_code))]
     Home,
+}
+
+/// Pieces of `path` split on both separators, so a Windows fixture still splits on Linux.
+fn path_parts(path: &Path) -> Vec<String> {
+    path.to_string_lossy()
+        .split(['\\', '/'])
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn same_part(left: &str, right: &str) -> bool {
+    #[cfg(windows)]
+    {
+        left.eq_ignore_ascii_case(right)
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
 }
 
 /// Replaces `root` at the start of `path`. `None` when `path` is not inside `root`.
 fn shorten_display_path(path: &Path, root: &Path, style: DisplayRoot) -> Option<String> {
-    let rest = path.strip_prefix(root).ok()?;
+    let full = path_parts(path);
+    let root_parts = path_parts(root);
+    if root_parts.is_empty() || full.len() <= root_parts.len() {
+        return None;
+    }
+    let (head, rest) = full.split_at(root_parts.len());
+    if !head
+        .iter()
+        .zip(&root_parts)
+        .all(|(part, root_part)| same_part(part, root_part))
+    {
+        return None;
+    }
     let mut parts = Vec::new();
-    for component in rest.components() {
-        match component {
-            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            _ => return None,
+    for part in rest {
+        if part == "." {
+            continue;
         }
+        if part == ".." {
+            return None;
+        }
+        parts.push(part.clone());
     }
     if parts.is_empty() {
         return None;
@@ -490,13 +524,9 @@ fn display_root() -> Option<(PathBuf, DisplayRoot)> {
         std::env::var_os("LOCALAPPDATA")
             .map(|value| (PathBuf::from(value), DisplayRoot::LocalAppData))
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(not(windows))]
     {
         std::env::var_os("HOME").map(|value| (PathBuf::from(value), DisplayRoot::Home))
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        None
     }
 }
 
@@ -1682,6 +1712,12 @@ mod tests {
             shown,
             "~/Library/Application Support/com.quietkeys.app/vault.quietkeys"
         );
+        assert!(!shown.contains("ada"));
+
+        let linux = Path::new("/home/ada/.local/share/com.quietkeys.app/vault.quietkeys");
+        let linux_home = Path::new("/home/ada");
+        let shown = shorten_display_path(linux, linux_home, DisplayRoot::Home).unwrap();
+        assert_eq!(shown, "~/.local/share/com.quietkeys.app/vault.quietkeys");
         assert!(!shown.contains("ada"));
 
         let elsewhere = Path::new(r"D:\vaults\vault.quietkeys");
