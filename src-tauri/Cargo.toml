@@ -2,7 +2,8 @@
 name = "quietkeys"
 version = "1.1.0"
 description = "A local-only, encrypted desktop password manager"
-authors = ["you"]
+authors = ["Ashton Stevens"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
