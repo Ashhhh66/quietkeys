@@ -2,6 +2,7 @@
   "name": "quietkeys",
   "private": true,
   "version": "1.1.0",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

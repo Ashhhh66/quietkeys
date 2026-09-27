@@ -13,6 +13,11 @@ Built with Tauri, Rust and TypeScript.
 
 ![Vault screen, dark theme](docs/screenshots/Dark-Theme.png)
 
+## Feedback
+
+- Bugs: open a [GitHub Issue](https://github.com/Ashhhh66/quietkeys/issues)
+- Questions, ideas, and first-run help: [Discussions](https://github.com/Ashhhh66/quietkeys/discussions)
+
 ---
 
 ## Features
