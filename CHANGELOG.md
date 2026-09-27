@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - On Linux, Settings shortens the home folder to `~/`, the same way macOS does, so the username stays off screen.
 
-## [1.1.0] - [RELEASE DATE]
+## [1.1.0] - 2026-09-27
 
 ### Added
 
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vault health runs on this computer. The screen receives ids, titles, domains, and issue kinds. Passwords and scores stay in Rust.
 - Saves use vault format version 2. A vault saved by 1.1 cannot be opened by 1.0. The first time 1.1 saves over a 1.0 vault, it keeps a one-time copy at `vault.quietkeys.v1-backup` in the same folder and never overwrites that copy.
 
-## [1.0.0] - [RELEASE DATE]
+## [1.0.0] - 2026-09-26
 
 ### Added
 
