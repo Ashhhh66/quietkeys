@@ -46,3 +46,49 @@ Run these by hand on a built app before tagging a release.
 ## Both themes
 
 - Switch between light and dark. Text, buttons, empty states, and the keyboard focus ring stay readable in both.
+
+## Command palette
+
+- Ctrl/Cmd+K opens the palette. Esc closes it.
+- Enter copies the highlighted login's password and Shift+Enter copies the username. Both use the concealed clipboard toast.
+
+## Favourites and recently used
+
+- Starring a login lists it under Favourites. The star in the details panel matches.
+- Copying a password or username makes the login appear under Recently used.
+
+## Password history
+
+- Changing a login's password adds a masked row under Password history, with Copy.
+- Copy uses the concealed clipboard. The previous password is not shown in the list.
+
+## Delete, undo, and recently deleted
+
+- Delete shows an undo toast for about 10 seconds. Undo puts the login back.
+- After the toast, the login is under Recently deleted and is absent from All items, search, and the palette.
+- Delete forever asks first and removes it.
+
+## Passphrase generator
+
+- Passphrase mode uses the word list. Changing the word count, separator, capitalise, or number regenerates the phrase.
+- The strength label follows those options.
+
+## Where your data lives
+
+- Settings shows the vault path with the home folder shortened (`%LOCALAPPDATA%\...` on Windows, `~/...` on macOS).
+- Show in folder reveals the real vault file.
+- A backup that still opens shows Healthy with a relative time. A missing backup says there is no backup yet.
+- How it works opens the security section of the README.
+
+## Vault health
+
+- Health shows Strong, Weak, and Reused counts, and one card per issue.
+- A reused password is one card. A login that is also weak has a Weak pill on that card and no separate weak card.
+- Generate a new password opens the editor with the generator. Open uses that login's stored website.
+- The details pills for that login match the Health screen.
+
+## Upgrade from 1.0
+
+- Open a vault last saved by 1.0, then save any change.
+- The vault file is format version 2, and `vault.quietkeys.v1-backup` sits beside it. A later save does not overwrite that copy.
+- quietkeys 1.0 cannot open the new vault file. It can still open the v1 backup with the password from before the upgrade.

@@ -28,10 +28,23 @@ Built with Tauri, Rust and TypeScript.
 - Auto-lock after inactivity
 - Change master password
 - Restore from backup and encrypted export
+- Command palette (Ctrl/Cmd+K) to find a login and copy its username or password
+- Favourites, recently used, and sort
+- Open a login's website from the app
+- Password history, copied only through the concealed clipboard
+- Delete with a short undo, Recently deleted, and removal after 30 days
+- Vault health for weak and reused passwords, checked on this computer
+- Settings shows where the vault file lives, whether the backup still opens, and the encryption names, and can show the file in its folder
 
 **In progress** (see [Roadmap](#roadmap))
 
 - Browser extension for autofill
+
+---
+
+## Upgrading from 1.0
+
+The first save in 1.1 writes the vault as format version 2. quietkeys 1.0 cannot open that file afterwards. Before that save, 1.1 keeps a one-time copy at `vault.quietkeys.v1-backup` in the same folder and never overwrites it. quietkeys 1.0 can still open that copy with the password the vault had at the upgrade.
 
 ---
 
@@ -56,13 +69,13 @@ macOS blocks the app the first time you open it. Go to **System Settings > Priva
 On Windows, in PowerShell, from the folder that contains the installer:
 
 ```powershell
-Get-FileHash .\quietkeys_1.0.0_x64_en-US.msi -Algorithm SHA256
+Get-FileHash .\quietkeys_<version>_x64_en-US.msi -Algorithm SHA256
 ```
 
 On macOS, in Terminal:
 
 ```bash
-shasum -a 256 quietkeys_1.0.0_universal.dmg
+shasum -a 256 quietkeys_<version>_universal.dmg
 ```
 
 Use the file names from the release if they differ. PowerShell prints the hash in uppercase; `SHA256SUMS.txt` uses lowercase. The two match when the characters are the same.
@@ -146,7 +159,8 @@ New vaults, and any vault saved by version 1.1, use format version 2. A vault sa
 - Serialising the vault can leave small fragments of plaintext in freed memory. The final buffer is wiped and pre-allocated to keep this to a minimum.
 - The unlock throttle is held in memory and resets when the app restarts. It slows guessing at the machine, while Argon2id protects a stolen vault file.
 - There is no password reset. If you forget your master password, the vault can't be recovered.
-- Deleted logins stay in the encrypted vault for up to 30 days, and previous passwords are kept in the entry's history, until you delete the login forever or the 30 days pass.
+- Deleted logins stay encrypted in the vault for up to 30 days, and previous passwords stay encrypted in that login's history, until you delete the login forever or the 30 days pass.
+- Vault health runs on this computer. The screen receives login ids, titles, domains, and whether each issue is weak or reused. Passwords, parts of passwords, and strength scores are not included.
 
 ---
 
@@ -228,8 +242,9 @@ The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROAD
 - [x] Phase 2: app state and commands
 - [x] Phase 3: core interface
 - [x] Phase 4: generator, clipboard, auto-lock, change master password, backups
-- [ ] Phase 5: polish, installers and CI, ending with the v1 release
-- [ ] Phase 6: onboarding and Emergency Kit, vault health, import
+- [x] Phase 5: polish, installers and CI, ending with the v1 release
+- [x] 1.1: vault health
+- [ ] Phase 6: onboarding and Emergency Kit, import
 - [ ] Phase 7: recovery code with vault format v2, choosing the vault location with conflict detection, TOTP
 - [ ] Phase 8: native host and pairing
 - [ ] Phase 9: browser extension

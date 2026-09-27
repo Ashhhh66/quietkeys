@@ -208,19 +208,20 @@ Work through one phase at a time. Do not start the next phase until every accept
 - Change master password (new password must meet the 12-character minimum). This must immediately re-save `vault.quietkeys.bak` under the new key (with a new salt), so the old password can no longer unlock any file.
 - Strength meter on entry passwords.
 
-### Phase 5 — Polish and publish
+### Phase 5 — Polish and publish (done)
 - Consistent design, keyboard shortcuts (Ctrl/Cmd+F search, Ctrl/Cmd+L lock).
 - Empty states and friendly error messages.
 - Tauri bundling for Windows (.msi) and macOS (.dmg).
 - GitHub Actions: lint, test, and build on every push, plus `cargo audit` and `npm audit` to catch vulnerable dependencies. Enable Dependabot.
 - Code signing: unsigned apps trigger macOS Gatekeeper and Windows SmartScreen warnings. Signing and notarizing on macOS needs a paid Apple Developer account. Until then, explain the warning and how to open the app in the README.
 - README with screenshots, features, security design, **threat model**, limitations, and an "not independently audited" disclaimer.
-- **v1 release.** The first release ships at the end of this phase. Phases 6 and later are after v1.
+- **v1 release.** v1.0.0 is published. This phase is done.
 
 ### Phase 6 — P1 features
 - Onboarding and an Emergency Kit.
-- Vault health.
 - Import.
+
+Vault health shipped in 1.1.
 
 ### Phase 7 — P2 features
 - Recovery code, which requires vault format v2.

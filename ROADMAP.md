@@ -1,14 +1,15 @@
 # Roadmap
 
-Phases 0–4 are done. Phase 5 ends with the v1 release. Later phases are after that.
+Phases 0–5 are done. v1.0.0 is released, and 1.1 adds vault health. Later phases are after that.
 
 - [x] Phase 0: project setup
 - [x] Phase 1: crypto and vault engine
 - [x] Phase 2: app state and commands
 - [x] Phase 3: core interface
 - [x] Phase 4: generator, clipboard, auto-lock, change master password, backups
-- [ ] Phase 5: polish, installers and CI, ending with the v1 release
-- [ ] Phase 6: onboarding and Emergency Kit, vault health, import
+- [x] Phase 5: polish, installers and CI, ending with the v1 release
+- [x] 1.1: vault health
+- [ ] Phase 6: onboarding and Emergency Kit, import
 - [ ] Phase 7: recovery code with vault format v2, choosing the vault location with conflict detection, TOTP
 - [ ] Phase 8: native host and pairing
 - [ ] Phase 9: browser extension
