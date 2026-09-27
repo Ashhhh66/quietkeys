@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "kdf": {
+    "alg": "argon2id",
+    "m_kib": 64,
+    "t": 1,
+    "p": 1,
+    "salt": "2dPhFIv26DIE95DbNKXiEw=="
+  },
+  "cipher": {
+    "alg": "xchacha20poly1305",
+    "nonce": "yg+BnJmGpC7m3O5dj6y1vK/6N3KM9LLF"
+  },
+  "ciphertext": "0BPHAF8b0ykFNsDkAZ0u7GNIqu779A++xp+7OpgcvZW29Hk+cryhNa/QTWT+Sx0C7mdq+XVzk2lLHAfdagV0sQdHdZ0gsj72DfIA2CTQsJgnthJvi88QdzIBURMCdMWkhyZ5xcU56wUSu/tkYfoe+bpC3AzrldIcSxeEiKWrdfUJjj93b1Ys3h1Y9/iTsYoReEfJ0xH/2BFxDXmfeSYiTO2b2CEZS4+yei+0R4ZqFtbFHHVlYH5XtIfAYZ91JaxmzdFqsPuU99qz51MMeotGGgrWxSCQrskWQhUjWUkrbJGiP6QQa05ko7enzAuIzK6tVfioq3NGR3IOblH+3FN6yi/LDzZgofZDT7YdrZlwKEEYhyodq1txeaNh5Va5ardU7R7LJ9ig2T8c4lMnPZQ="
+}

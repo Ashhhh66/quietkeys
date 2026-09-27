@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-encryption-readme"
+description = "Enables the open_encryption_readme command without any pre-configured scope."
+commands.allow = ["open_encryption_readme"]
+
+[[permission]]
+identifier = "deny-open-encryption-readme"
+description = "Denies the open_encryption_readme command without any pre-configured scope."
+commands.deny = ["open_encryption_readme"]

@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { isUnlocked, onLocked, vaultExists } from "./api";
-import { useIdleLock } from "./hooks/useIdleLock";
 import Setup from "./screens/Setup";
 import Unlock from "./screens/Unlock";
 import VaultList from "./screens/VaultList";
@@ -23,8 +22,6 @@ function App() {
   useEffect(() => {
     onLocked(() => setScreen("unlock"));
   }, []);
-
-  useIdleLock(screen === "vault", () => setScreen("unlock"));
 
   useEffect(() => {
     let cancelled = false;

@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { AlertCircle, Clock, LoaderCircle, Lock, ShieldCheck } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AlertCircle, Clock, Eye, EyeOff, LoaderCircle, Lock, ShieldCheck } from "lucide-react";
 import { isApiError, unlock } from "../api";
 import AuthCard, { ALERT, FIELD_INPUT, FIELD_LABEL, PRIMARY_BUTTON } from "../components/AuthCard";
 import RestoreBackup from "./RestoreBackup";
@@ -12,10 +12,13 @@ type Failure = { kind: "wrong_password" } | { kind: "other"; message: string };
 
 export default function Unlock({ onUnlocked }: Props) {
   const [password, setPassword] = useState("");
+  const [visible, setVisible] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [throttleDeadline, setThrottleDeadline] = useState<number | null>(null);
   const [countdown, setCountdown] = useState(0);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   // Ticks the countdown down to zero once a Throttled error sets a deadline, without
   // depending on the clock drifting: it's always computed from the actual deadline.
@@ -32,6 +35,24 @@ export default function Unlock({ onUnlocked }: Props) {
   }, [throttleDeadline]);
 
   const throttled = countdown > 0;
+
+  useEffect(() => {
+    const input = passwordRef.current;
+    if (!input) return;
+    const readCaps = (event: Event) => {
+      const native = event as Event & { getModifierState?: (key: string) => boolean };
+      if (typeof native.getModifierState !== "function") return;
+      setCapsLock(native.getModifierState("CapsLock"));
+    };
+    input.addEventListener("keydown", readCaps);
+    input.addEventListener("keyup", readCaps);
+    input.addEventListener("focus", readCaps);
+    return () => {
+      input.removeEventListener("keydown", readCaps);
+      input.removeEventListener("keyup", readCaps);
+      input.removeEventListener("focus", readCaps);
+    };
+  }, []);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -64,10 +85,10 @@ export default function Unlock({ onUnlocked }: Props) {
   return (
     <AuthCard width="narrow">
       <div className="flex flex-col items-center gap-3 text-center">
-        <span className="flex size-14 items-center justify-center rounded-2xl bg-accent text-on-accent">
+        <span className="brand-tile flex size-[60px] items-center justify-center rounded-[18px] text-on-accent">
           <Lock size={26} strokeWidth={2} aria-hidden />
         </span>
-        <h1 className="text-[24px] font-semibold">quietkeys</h1>
+        <h1 className="text-[28px] font-semibold tracking-[-0.02em]">Welcome back</h1>
         <p className="text-[14.5px] text-muted">Enter your master password to unlock your vault.</p>
       </div>
       <form onSubmit={handleSubmit} className="flex flex-col gap-[22px]">
@@ -75,17 +96,38 @@ export default function Unlock({ onUnlocked }: Props) {
           <label className={FIELD_LABEL} htmlFor="unlock-password">
             Master password
           </label>
-          <input
-            id="unlock-password"
-            type="password"
-            autoComplete="current-password"
-            autoFocus
-            value={password}
-            aria-invalid={failure?.kind === "wrong_password" ? true : undefined}
-            onChange={(e) => setPassword(e.target.value)}
-            onContextMenu={(e) => e.preventDefault()}
-            className={FIELD_INPUT}
-          />
+          <div className="relative">
+            <input
+              id="unlock-password"
+              type={visible ? "text" : "password"}
+              autoComplete="current-password"
+              autoFocus
+              value={password}
+              aria-invalid={failure?.kind === "wrong_password" ? true : undefined}
+              onChange={(e) => setPassword(e.target.value)}
+              onContextMenu={(e) => e.preventDefault()}
+              ref={passwordRef}
+              className={`${FIELD_INPUT} pr-12`}
+            />
+            <button
+              type="button"
+              aria-label={visible ? "Hide master password" : "Show master password"}
+              onClick={() => setVisible((current) => !current)}
+              className="absolute top-1/2 right-2 flex size-8 -translate-y-1/2 items-center justify-center rounded-[8px] text-icon-button hover:bg-nav-active-bg/60"
+            >
+              {visible ? (
+                <EyeOff size={17} strokeWidth={2} aria-hidden />
+              ) : (
+                <Eye size={17} strokeWidth={2} aria-hidden />
+              )}
+            </button>
+          </div>
+          {capsLock && (
+            <p className="flex items-center gap-1.5 text-[13px] text-warn-fg">
+              <AlertCircle size={14} strokeWidth={2} aria-hidden />
+              Caps Lock is on
+            </p>
+          )}
         </div>
         {failure && (
           <p role="alert" className={`${ALERT} border-error-border bg-error-bg text-error-fg`}>
@@ -115,11 +157,11 @@ export default function Unlock({ onUnlocked }: Props) {
           )}
         </button>
       </form>
-      <p className="flex items-center justify-center gap-1.5 text-[12.5px] text-label">
-        <ShieldCheck size={13} strokeWidth={2} aria-hidden />
-        Your vault never leaves this computer.
-      </p>
-      <div className="flex justify-center">
+      <div className="flex items-center justify-between gap-3">
+        <p className="flex items-center gap-1.5 text-[12.5px] text-label">
+          <ShieldCheck size={13} strokeWidth={2} aria-hidden />
+          Vault on this computer only
+        </p>
         <RestoreBackup onRestored={onUnlocked} />
       </div>
     </AuthCard>

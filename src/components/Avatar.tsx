@@ -2,8 +2,8 @@ import { avatarColors, avatarLetter } from "../avatar";
 import { useTheme } from "../theme";
 
 const SIZES = {
-  sm: "size-[38px] rounded-[10px] text-[16px]",
-  lg: "size-[60px] rounded-2xl text-[26px]",
+  sm: "size-10 rounded-[12px] text-[16px]",
+  lg: "avatar-shadow size-[68px] rounded-[20px] text-[26px]",
 } as const;
 
 export default function Avatar({

@@ -3,8 +3,10 @@ pub mod commands;
 pub mod crypto;
 pub mod error;
 pub mod generator;
+pub mod health;
 pub mod state;
 pub mod vault;
+pub mod website;
 
 #[cfg(test)]
 mod test_util;
@@ -21,6 +23,7 @@ use crate::state::AppState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let dir = app.path().app_local_data_dir()?;
             create_private_dir(&dir)?;
@@ -41,6 +44,7 @@ pub fn run() {
             commands::update_entry,
             commands::delete_entry,
             commands::generate_password,
+            commands::generate_passphrase,
             commands::score_password,
             commands::change_master_password,
             commands::copy_password,
@@ -48,6 +52,17 @@ pub fn run() {
             commands::copy_generated_password,
             commands::restore_from_backup,
             commands::export_vault,
+            commands::clear_clipboard,
+            commands::open_entry_website,
+            commands::vault_info,
+            commands::vault_health,
+            commands::show_vault_in_folder,
+            commands::open_encryption_readme,
+            commands::set_favourite,
+            commands::restore_entry,
+            commands::delete_forever,
+            commands::list_deleted_entries,
+            commands::copy_history_password,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -106,5 +121,10 @@ mod registration {
                 "{permission} is missing from capabilities/default.json"
             );
         }
+
+        assert!(
+            !caps.to_ascii_lowercase().contains("opener"),
+            "the webview must not be granted opener permissions"
+        );
     }
 }

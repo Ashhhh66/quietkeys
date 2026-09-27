@@ -3,11 +3,13 @@
 
 use secrecy::SecretString;
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::error::VaultError;
-use crate::generator::{self, PasswordOptions, PasswordScore};
+use crate::generator::{self, GeneratedSecret, PassphraseOptions, PasswordOptions, PasswordScore};
+use crate::health::VaultHealth;
 use crate::state::{
-    AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput,
+    AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput, VaultInfo,
 };
 
 type CommandResult<T> = Result<T, VaultError>;
@@ -93,8 +95,16 @@ pub fn delete_entry(state: State<'_, AppState>, id: String) -> CommandResult<()>
 /// Works while the vault is locked. The generated password is returned to the UI; that is
 /// the point of this command.
 #[tauri::command]
-pub fn generate_password(options: PasswordOptions) -> CommandResult<String> {
-    Ok(generator::generate_password(&options)?.to_string())
+pub fn generate_password(options: PasswordOptions) -> CommandResult<GeneratedSecret> {
+    let bits = generator::password_entropy_bits(&options)?;
+    let value = generator::generate_password(&options)?.to_string();
+    Ok(GeneratedSecret { value, bits })
+}
+
+/// Works while the vault is locked. The passphrase is returned to the UI.
+#[tauri::command]
+pub fn generate_passphrase(options: PassphraseOptions) -> CommandResult<GeneratedSecret> {
+    generator::generate_passphrase(&options)
 }
 
 /// Works while the vault is locked.
@@ -169,6 +179,97 @@ pub async fn export_vault(app: AppHandle) -> CommandResult<()> {
     app.state::<AppState>().export_vault(&path)
 }
 
+/// Clears the clipboard when its change counter still matches the last quietkeys copy.
+#[tauri::command]
+pub fn clear_clipboard(state: State<'_, AppState>) -> CommandResult<()> {
+    state.clear_clipboard()
+}
+
+/// Settings details for the open vault. The path is shortened. No secrets.
+#[tauri::command]
+pub fn vault_info(state: State<'_, AppState>) -> CommandResult<VaultInfo> {
+    state.vault_info()
+}
+
+/// Weak and reused logins. Scoring can take a while on a large vault, so it runs on a
+/// blocking thread and the window stays responsive. The report has no passwords or scores.
+#[tauri::command]
+pub async fn vault_health(app: AppHandle) -> CommandResult<VaultHealth> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().vault_health())
+        .await
+        .map_err(|_| VaultError::Crypto)?
+}
+
+/// Reveals the vault file itself. The UI sends no path, and the webview has no opener permission.
+#[tauri::command]
+pub fn show_vault_in_folder(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    let path = state.vault_path_to_reveal()?;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|_| VaultError::VaultNotShown)?;
+    Ok(())
+}
+
+const ENCRYPTION_README: &str = "https://github.com/Ashhhh66/quietkeys#security-design";
+
+/// Opens the security section of the README. The URL is fixed here; the UI does not send one.
+#[tauri::command]
+pub fn open_encryption_readme(app: AppHandle, state: State<'_, AppState>) -> CommandResult<()> {
+    state.ensure_unlocked()?;
+    app.opener()
+        .open_url(ENCRYPTION_README, None::<&str>)
+        .map_err(|_| VaultError::WebsiteNotOpened)?;
+    Ok(())
+}
+
+/// Opens the entry's stored website. The UI sends the entry id, never a URL.
+/// The opener plugin is called from here; the webview has no opener permission.
+#[tauri::command]
+pub fn open_entry_website(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> CommandResult<()> {
+    let url = state.entry_website_url(&id)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|_| VaultError::WebsiteNotOpened)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_favourite(
+    state: State<'_, AppState>,
+    id: String,
+    favourite: bool,
+) -> CommandResult<EntrySummary> {
+    state.set_favourite(&id, favourite)
+}
+
+#[tauri::command]
+pub fn restore_entry(state: State<'_, AppState>, id: String) -> CommandResult<EntrySummary> {
+    state.restore_entry(&id)
+}
+
+#[tauri::command]
+pub fn delete_forever(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.delete_forever(&id)
+}
+
+#[tauri::command]
+pub fn list_deleted_entries(state: State<'_, AppState>) -> CommandResult<Vec<EntrySummary>> {
+    state.list_deleted_entries()
+}
+
+#[tauri::command]
+pub fn copy_history_password(
+    state: State<'_, AppState>,
+    entry_id: String,
+    history_id: String,
+) -> CommandResult<()> {
+    state.copy_history_password(&entry_id, &history_id)
+}
+
 fn suggested_export_name(now: time::OffsetDateTime) -> String {
     format!(
         "quietkeys-backup-{:04}-{:02}-{:02}.quietkeys",
@@ -180,7 +281,7 @@ fn suggested_export_name(now: time::OffsetDateTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::suggested_export_name;
+    use super::{suggested_export_name, ENCRYPTION_README};
 
     #[test]
     fn suggested_export_name_uses_the_given_date() {
@@ -189,6 +290,14 @@ mod tests {
         assert_eq!(
             suggested_export_name(now),
             "quietkeys-backup-2026-09-26.quietkeys"
+        );
+    }
+
+    #[test]
+    fn encryption_readme_is_the_fixed_github_section() {
+        assert_eq!(
+            ENCRYPTION_README,
+            "https://github.com/Ashhhh66/quietkeys#security-design"
         );
     }
 }

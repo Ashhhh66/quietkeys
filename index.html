@@ -17,6 +17,17 @@
               : "dark";
         }
         document.documentElement.setAttribute("data-theme", theme);
+        var density = null;
+        var textSize = null;
+        try {
+          density = localStorage.getItem("quietkeys.density");
+          textSize = localStorage.getItem("quietkeys.textSize");
+        } catch (e) {}
+        if (density === "compact") {
+          document.documentElement.setAttribute("data-density", "compact");
+        }
+        if (textSize === "a+") document.documentElement.style.fontSize = "110%";
+        else if (textSize === "a++") document.documentElement.style.fontSize = "120%";
       })();
     </script>
   </head>

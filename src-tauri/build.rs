@@ -12,6 +12,7 @@ const COMMANDS: &[&str] = &[
     "update_entry",
     "delete_entry",
     "generate_password",
+    "generate_passphrase",
     "score_password",
     "change_master_password",
     "copy_password",
@@ -19,6 +20,17 @@ const COMMANDS: &[&str] = &[
     "copy_generated_password",
     "restore_from_backup",
     "export_vault",
+    "clear_clipboard",
+    "open_entry_website",
+    "vault_info",
+    "vault_health",
+    "show_vault_in_folder",
+    "open_encryption_readme",
+    "set_favourite",
+    "restore_entry",
+    "delete_forever",
+    "list_deleted_entries",
+    "copy_history_password",
 ];
 
 fn main() {
