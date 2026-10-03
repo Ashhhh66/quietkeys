@@ -40,7 +40,7 @@ tauri-plugin-opener = "2"
 
 [dev-dependencies]
 # Already in Cargo.lock via other crates. Used only to check the bundled wordlist.
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
