@@ -112,8 +112,8 @@ fn de_secret<'de, D: serde::Deserializer<'de>>(
 
 pub const NATIVE_HOST_NAME: &str = "com.quietkeys.native_host";
 
-/// Chrome extension ids are 32 characters from a–p. Phase 9 replaces this placeholder.
-pub const CHROME_EXTENSION_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+/// Unpacked id of `extension/manifest.json`. The extension test checks the public key hashes to this.
+pub const CHROME_EXTENSION_ID: &str = "mmgnphcfacceojicelmchbgpmgclieda";
 
 pub fn windows_registry_key() -> &'static str {
     r"Software\Google\Chrome\NativeMessagingHosts\com.quietkeys.native_host"
@@ -936,7 +936,7 @@ mod tests {
     fn manifest_allows_only_this_extension() {
         let json =
             chrome_manifest(Path::new("/opt/quietkeys-native-host"), CHROME_EXTENSION_ID).unwrap();
-        assert!(json.contains("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"));
+        assert!(json.contains("chrome-extension://mmgnphcfacceojicelmchbgpmgclieda/"));
         assert!(!json.contains("chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/"));
         assert!(json.contains(r#""type": "stdio""#));
         assert_eq!(

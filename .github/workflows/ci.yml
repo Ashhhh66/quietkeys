@@ -75,6 +75,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Build extension
+        run: npm run build:extension
+
       - name: npm audit
         run: npm audit --audit-level=high
 

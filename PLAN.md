@@ -238,11 +238,11 @@ Vault health shipped in 1.1.
 - **Done when:** a test can pair, call `find_logins`, and get the matching title and username, with no password, through the native-host framing.
 
 ### Phase 9 — Browser extension
-- Manifest V3 extension in TypeScript: popup showing status and matching logins, a small icon in login fields, fill on click, pairing screen.
-- "Save this login?" prompt after a form submit, confirmed in the desktop app.
-- Chrome first; Firefox once stable (manifest differences only).
-- **Done when:** on a real site, the user can pair, click to fill a matching login, and save a new login, with no filling on non-matching or lookalike domains.
-- Publish to the Chrome Web Store (one-off developer fee) with a privacy policy stating the extension collects no data.
+- Manifest V3 Chrome extension in `extension/`. The popup shows pairing, lock status, and matching logins. A small icon in a password field lists matches; a click fills that login. Nothing is filled on page load, in a subframe, or on a different origin.
+- After a form submit, the extension sends that form's url, username, and password. The desktop app still asks before saving.
+- The extension stores the pairing token in `chrome.storage.local`. It does not store passwords and has no network permission. The public key in `extension/manifest.json` pins the unpacked extension id that the native host allows.
+- Firefox is not in this phase. Publishing to the Chrome Web Store is a manual step; the store assigns a new id, and the native host's allowed origin has to change to match. The privacy notice states the extension collects no data.
+- **Done when:** tests show the extension can pair, fill on click, and offer a save, and that it does not fill a lookalike origin, a subframe, or a page load. Loading it in Chrome is still a manual check.
 
 Optional P3 work is not a phase. Those items stay in [ROADMAP.md](ROADMAP.md).
 

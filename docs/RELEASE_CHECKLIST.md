@@ -106,6 +106,13 @@ Run these by hand on a built app before tagging a release.
 - A locked vault does not return logins.
 - Saving a login from the browser waits until Settings confirms it.
 
+## Browser extension
+
+- Load `extension/dist` unpacked. Pair with the 6-digit code from Settings.
+- On a login page, the field icon appears and nothing is filled until a login is clicked.
+- A lookalike host does not offer the real site's login.
+- Submitting the form shows Save login in Settings, and Don't save leaves the vault unchanged.
+
 ## Upgrade from 1.0
 
 - Open a vault last saved by 1.0, then save any change.

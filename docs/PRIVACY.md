@@ -1,16 +1,20 @@
 # Privacy notice
 
-**Last updated:** 26/09/2026
+**Last updated:** 12/10/2026
 
 quietkeys is built by Ashh66, an individual developer in the United Kingdom. This notice explains what happens to your information when you visit the quietkeys website or join the waitlist.
 
-The short version: the only thing collected is your email address, if you choose to give it, and it's used for one thing only.
+The short version: the app and the browser extension collect nothing. The only thing the website collects is your email address, if you choose to give it, and it's used for one thing only.
 
 ---
 
 ## The quietkeys app
 
 The quietkeys app itself collects nothing. It never connects to the internet, has no accounts, and sends no analytics or crash reports. Your vault stays on your computer.
+
+## The browser extension
+
+The Chrome extension collects nothing. It has no network permission and no accounts. It stores a pairing token in the browser on this computer so it can ask the quietkeys app for logins. Passwords are not stored in the browser. A password is written only into the login form you clicked, and only after that click. The extension does not read the rest of the page.
 
 ## The website
 

@@ -12,7 +12,9 @@ Phases 0–5 are done. v1.0.0 is released, and 1.1 adds vault health. Later phas
 - [x] Phase 6: onboarding and Emergency Kit, import
 - [x] Phase 7: recovery code (vault format version 3), choosing the vault location with conflict detection, TOTP
 - [x] Phase 8: native host and pairing
-- [ ] Phase 9: browser extension
+- [x] Phase 9: browser extension
+
+Firefox uses the same extension with a different manifest, and is not started.
 
 ## Optional (P3)
 

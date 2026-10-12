@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run && tsc -p extension --noEmit",
+    "build:extension": "node extension/build.mjs"
   },
   "dependencies": {
     "@fontsource/instrument-sans": "^5.3.0",

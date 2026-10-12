@@ -42,10 +42,7 @@ Built with Tauri, Rust and TypeScript.
 - Delete with a short undo, Recently deleted, and removal after 30 days
 - Vault health for weak and reused passwords, checked on this computer
 - Settings shows where the vault file lives, whether the backup still opens, and the encryption names, and can show the file in its folder
-
-**In progress** (see [Roadmap](#roadmap))
-
-- Browser extension for autofill
+- A Chrome extension fills a matching login when you click it. It stores a pairing token on this computer and makes no network requests.
 
 ---
 
@@ -186,7 +183,10 @@ git clone https://github.com/Ashhhh66/quietkeys.git
 cd quietkeys
 npm install
 npm run tauri dev
+npm run build:extension
 ```
+
+`npm run build:extension` writes the Chrome extension to `extension/dist`. Load that folder unpacked at `chrome://extensions`. Pairing steps are in [docs/NATIVE_HOST.md](docs/NATIVE_HOST.md).
 
 ### Test and check
 
@@ -236,6 +236,8 @@ src-tauri/src/
 src/
   api.ts        Typed wrappers for every command
   screens/      Setup, Unlock, Vault and entry editor
+extension/
+  src/          Chrome extension: popup, field icon, fill on click
 ```
 
 ---
@@ -254,7 +256,7 @@ The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROAD
 - [x] Phase 6: onboarding and Emergency Kit, import
 - [x] Phase 7: recovery code (vault format version 3), choosing the vault location with conflict detection, TOTP
 - [x] Phase 8: native host and pairing
-- [ ] Phase 9: browser extension
+- [x] Phase 9: browser extension
 
 ## License
 

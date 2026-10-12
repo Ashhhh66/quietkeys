@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "quietkeys",
+  "version": "1.1.0",
+  "description": "Fills logins from the quietkeys app on this computer. Makes no network requests.",
+  "minimum_chrome_version": "120",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAndy5wA6BMNCz30sJ1JoaraU7sf2xdQnlVWa8hMzsPB8ZaWn57wCzfRc56MsRBCuAf6e8QDadh/uBHa1Y3LalLxXC+IM4oqN+zBSBwIjm4gbrZVb0IWh2NL2s/sokpH8fQfIvLvSZzKPE1fjMPMVBI3PXtFwmegTihvDcKiWDxfmyGh1mEaNFWW7XgZuPg2Jh1bZotOa4CpYKiWTCkPCjWTK9+0FiUExR1PGA7Dp+Hs3P9a/p2YGmzsAj5w6n1NNdLYlU2XiFcWSHukF7gyBmEhGATIcMMIYpJ4lY4PbxX1wOB2yWR7OSRQZoPFbo1jK7zPEiTtWJ7dNywhCU965+ZQIDAQAB",
+  "permissions": ["nativeMessaging", "storage", "activeTab"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "quietkeys",
+    "default_icon": {
+      "32": "icons/32.png"
+    }
+  },
+  "icons": {
+    "32": "icons/32.png",
+    "128": "icons/128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}

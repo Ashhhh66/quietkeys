@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A recovery code can open a vault when the master password is forgotten. It is shown once and is not stored. Existing vaults stay on format version 2 until a code is created.
 - The vault file can be moved to another folder. A folder that already has a vault is refused.
 - A login can store a one-time code. The secret stays in the vault; the screen shows the current code.
-- A browser can be paired from Settings. The app stores a hash of the pairing token, and a locked vault answers no login request. The extension itself is not part of this version.
+- A browser can be paired from Settings. The app stores a hash of the pairing token, and a locked vault answers no login request.
+- A Chrome extension fills a matching login when you click it, and can ask the app to save a new one. It stores the pairing token in the browser and makes no network requests. Nothing is filled on page load, in a frame, or on a different site.
 
 ### Fixed
 
