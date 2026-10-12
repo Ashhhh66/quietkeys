@@ -43,7 +43,7 @@ url = "2.5.8"
 tauri-plugin-opener = "2"
 hmac = "0.12"
 sha1 = "0.10"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 psl = "2.1.171"
 interprocess = "2.2.3"
 
