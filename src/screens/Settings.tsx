@@ -11,10 +11,12 @@ import {
 } from "../appearance";
 import {
   changeMasterPassword,
+  createRecoveryCode,
   exportVault,
   friendlyMessage,
   importLogins,
   isApiError,
+  moveVault,
   openEncryptionReadme,
   showVaultInFolder,
   vaultInfo,
@@ -59,8 +61,16 @@ export default function Settings() {
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [recoveryWords, setRecoveryWords] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [creatingRecovery, setCreatingRecovery] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
-  const canChange = passwordChecklistPasses(next, confirm) && current.length > 0 && !submitting;
+  const canChange =
+    passwordChecklistPasses(next, confirm) &&
+    (info?.viaRecovery || current.length > 0) &&
+    !submitting;
 
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +92,37 @@ export default function Settings() {
       cancelled = true;
     };
   }, []);
+
+  async function handleRecovery() {
+    setCreatingRecovery(true);
+    setRecoveryError(null);
+    try {
+      const words = await createRecoveryCode();
+      setRecoveryWords(words);
+      setInfo((currentInfo) => (currentInfo ? { ...currentInfo, hasRecovery: true } : currentInfo));
+    } catch (err) {
+      setRecoveryError(friendlyMessage(err));
+    } finally {
+      setCreatingRecovery(false);
+    }
+  }
+
+  async function handleMove() {
+    setMoving(true);
+    setMoveError(null);
+    try {
+      const result = await moveVault();
+      if (!result.cancelled && result.path) {
+        setInfo((currentInfo) =>
+          currentInfo ? { ...currentInfo, path: result.path ?? currentInfo.path } : currentInfo,
+        );
+      }
+    } catch (err) {
+      setMoveError(friendlyMessage(err));
+    } finally {
+      setMoving(false);
+    }
+  }
 
   async function handleChange(e: FormEvent) {
     e.preventDefault();
@@ -240,6 +281,38 @@ export default function Settings() {
               >
                 Emergency Kit
               </button>
+              <button
+                type="button"
+                onClick={() => void handleRecovery()}
+                disabled={creatingRecovery || info?.hasRecovery}
+                className="mt-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
+              >
+                {info?.hasRecovery ? "Recovery code created" : "Create a recovery code"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleMove()}
+                disabled={moving}
+                className="mt-2 ml-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
+              >
+                {moving ? "Moving…" : "Move vault"}
+              </button>
+              {recoveryWords && (
+                <p className="mt-3 text-[14px] text-text" aria-label="Recovery code">
+                  Write these words down now. They will not be shown again.
+                  <span className="mt-1 block font-mono text-[13px]">{recoveryWords}</span>
+                </p>
+              )}
+              {recoveryError && (
+                <p role="alert" className="mt-2 text-[13.5px] text-error-fg">
+                  {recoveryError}
+                </p>
+              )}
+              {moveError && (
+                <p role="alert" className="mt-2 text-[13.5px] text-error-fg">
+                  {moveError}
+                </p>
+              )}
             </InfoCell>
           </div>
         )}
@@ -287,13 +360,15 @@ export default function Settings() {
           </div>
           <form onSubmit={handleChange} className="flex flex-col gap-4">
             <h4 className="text-[14px] font-semibold">Master password</h4>
-            <Field
-              id="current-master-password"
-              label="Current password"
-              value={current}
-              autoComplete="current-password"
-              onChange={setCurrent}
-            />
+            {!info?.viaRecovery && (
+              <Field
+                id="current-master-password"
+                label="Current password"
+                value={current}
+                autoComplete="current-password"
+                onChange={setCurrent}
+              />
+            )}
             <Field
               id="new-master-password"
               label="New password"

@@ -2,9 +2,11 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { Eye, EyeOff, Sparkles } from "lucide-react";
 import {
   addEntry,
+  clearTotp,
   getEntry,
   getPassword,
   isApiError,
+  setTotp,
   updateEntry,
   type EntrySummary,
 } from "../api";
@@ -50,6 +52,9 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
+  const [totpSecret, setTotpSecret] = useState("");
+  const [totpEnabled, setTotpEnabled] = useState(false);
+  const [removeTotp, setRemoveTotp] = useState(false);
   const [loading, setLoading] = useState(id !== null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +79,7 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
         setUsername(details.username);
         setUrl(details.url);
         setNotes(details.notes);
+        setTotpEnabled(details.totp === true);
       } catch (err) {
         if (!cancelled) setError(isApiError(err) ? err.message : "Could not load entry");
       } finally {
@@ -135,6 +141,11 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
           url,
           notes,
         });
+      }
+      if (totpSecret.trim()) {
+        await setTotp(saved.id, totpSecret.trim());
+      } else if (removeTotp) {
+        await clearTotp(saved.id);
       }
       onDone(saved);
     } catch (err) {
@@ -220,6 +231,33 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
             className={`${INPUT} py-2.5 text-[14.5px] leading-[1.55]`}
           />
           <Counter value={notes} max={MAX_NOTES_CHARS} />
+        </div>
+        <div className="rounded-[14px] border border-card-border bg-card px-5 py-4">
+          <label className={`${LABEL} mb-2`} htmlFor="totp-secret">
+            One-time code secret
+          </label>
+          {totpEnabled && !removeTotp && (
+            <p className="mb-2 text-[13.5px] text-muted">A one-time code is set for this login.</p>
+          )}
+          <input
+            id="totp-secret"
+            type="password"
+            value={totpSecret}
+            autoComplete="off"
+            placeholder="Leave blank to keep the current secret"
+            onChange={(e) => setTotpSecret(e.target.value)}
+            onContextMenu={(e) => e.preventDefault()}
+            className={`${INPUT} h-10 font-mono select-none placeholder:font-sans placeholder:text-muted`}
+          />
+          {totpEnabled && (
+            <button
+              type="button"
+              onClick={() => setRemoveTotp((current) => !current)}
+              className="mt-2 text-[13px] font-medium text-accent-text"
+            >
+              {removeTotp ? "Keep the one-time code" : "Remove the one-time code"}
+            </button>
+          )}
         </div>
         {error && (
           <p

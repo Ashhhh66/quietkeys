@@ -19,6 +19,7 @@ export type ApiErrorKind =
   | "unsupported"
   | "website_not_opened"
   | "import_refused"
+  | "location_taken"
   | "invalid_generator_options"
   | "crypto"
   | "io";
@@ -55,6 +56,8 @@ export function friendlyMessage(err: unknown): string {
       return err.message;
     case "import_refused":
       return "That file can't be imported.";
+    case "location_taken":
+      return "That folder already has a vault.";
     default:
       return err.message;
   }
@@ -119,6 +122,8 @@ export interface EntryDetails {
   updatedAt: string;
   /** Previous passwords by id and date. The passwords themselves are not included. */
   history?: HistoryMeta[];
+  /** A one-time code is set. The secret is not included. */
+  totp?: boolean;
 }
 
 export interface EntryInput {
@@ -170,6 +175,32 @@ export const createVault = (masterPassword: string): Promise<void> =>
   call("create_vault", { masterPassword });
 
 export const unlock = (masterPassword: string): Promise<void> => call("unlock", { masterPassword });
+
+export const unlockWithRecovery = (recoveryCode: string): Promise<void> =>
+  call("unlock_with_recovery", { recoveryCode });
+
+/** Shown once. The app does not keep a copy. */
+export const createRecoveryCode = (): Promise<string> => call("create_recovery_code");
+
+export interface MoveVaultResult {
+  cancelled: boolean;
+  path: string | null;
+}
+
+/** The folder dialog runs in Rust. The UI sends no path. */
+export const moveVault = (): Promise<MoveVaultResult> => call("move_vault");
+
+export const setTotp = (id: string, secret: string): Promise<void> =>
+  call("set_totp", { id, secret });
+
+export const clearTotp = (id: string): Promise<void> => call("clear_totp", { id });
+
+export interface TotpCode {
+  code: string;
+  secondsRemaining: number;
+}
+
+export const totpCode = (id: string): Promise<TotpCode> => call("totp_code", { id });
 
 export const lock = (): Promise<void> => call("lock");
 
@@ -237,6 +268,8 @@ export interface VaultInfo {
   backup: BackupStatus;
   kdf: string;
   cipher: string;
+  hasRecovery: boolean;
+  viaRecovery: boolean;
 }
 
 export type BackupStatus =

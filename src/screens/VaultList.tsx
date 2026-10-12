@@ -34,6 +34,7 @@ import {
   vaultHealth,
   restoreEntry,
   setFavourite,
+  totpCode,
   type EntryDetails,
   type EntrySummary,
   type VaultHealth,
@@ -814,6 +815,42 @@ function NavItem({
   );
 }
 
+function TotpReadout({ id }: { id: string }) {
+  const [code, setCode] = useState<string | null>(null);
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer = 0;
+    async function load() {
+      try {
+        const next = await totpCode(id);
+        if (cancelled) return;
+        setCode(next.code);
+        setSeconds(next.secondsRemaining);
+        timer = window.setTimeout(load, Math.max(1, next.secondsRemaining) * 1000);
+      } catch {
+        if (!cancelled) setCode(null);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [id]);
+
+  return (
+    <section className="flex flex-col gap-1 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+      <h3 className="text-[12px] font-semibold tracking-[0.06em] text-label uppercase">
+        One-time code
+      </h3>
+      <p className="font-mono text-[22px] tracking-[0.18em] text-text">{code ?? "—"}</p>
+      <p className="text-[12.5px] text-muted">{seconds > 0 ? `${seconds}s` : ""}</p>
+    </section>
+  );
+}
+
 function EntryPanel({
   entry,
   health,
@@ -1051,6 +1088,8 @@ function EntryPanel({
           {copyError}
         </p>
       )}
+
+      {details?.totp && <TotpReadout id={entry.id} />}
 
       <section className="flex flex-col gap-2 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
         <h3 className="text-[12px] font-semibold tracking-[0.06em] text-label uppercase">Notes</h3>

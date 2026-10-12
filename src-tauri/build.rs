@@ -32,6 +32,12 @@ const COMMANDS: &[&str] = &[
     "list_deleted_entries",
     "copy_history_password",
     "import_logins",
+    "create_recovery_code",
+    "unlock_with_recovery",
+    "move_vault",
+    "set_totp",
+    "clear_totp",
+    "totp_code",
 ];
 
 fn main() {

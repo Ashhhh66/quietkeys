@@ -21,6 +21,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 | Backend / crypto | Rust |
 | Key derivation | `argon2` crate (Argon2id) |
 | Encryption | `chacha20poly1305` crate (XChaCha20-Poly1305) |
+| One-time codes | `hmac` 0.12 and `sha1` 0.10 (RFC 6238 HMAC-SHA1). Not a homemade hash. |
 | Secret handling | `zeroize` and `secrecy` crates |
 | Randomness | `rand` with `OsRng` / `getrandom` only |
 | Strength meter | `zxcvbn` crate |
@@ -224,9 +225,9 @@ Work through one phase at a time. Do not start the next phase until every accept
 Vault health shipped in 1.1.
 
 ### Phase 7 — P2 features
-- Recovery code, which requires vault format v2.
-- Choosing the vault location, with conflict detection.
-- TOTP.
+- Recovery code. A version 2 vault stays version 2 until the user creates a code. That save switches the file to version 3: a random data key encrypts the body, the master password seals that key, and the recovery code seals the same key. The code is eight EFF words, shown once, and not stored. A password change re-seals the data key and keeps the recovery seal. A vault opened with the recovery code can set a new master password without the old one.
+- Choosing the vault location. A pointer in app data names the vault file. The folder is chosen in Rust. If that folder already contains `vault.quietkeys`, the move is refused and the file is not read. The screen still shows the shortened path.
+- TOTP. HMAC-SHA1, 30 seconds, 6 digits. The secret stays in the vault. List and get-entry return only whether a code is set. The current code is fetched when the login is open.
 
 ### Phase 8 — Native host and pairing (no browser UI yet)
 - Build the `native-host` binary and the IPC listener inside the desktop app.

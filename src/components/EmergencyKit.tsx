@@ -46,9 +46,18 @@ export default function EmergencyKit({ path, onClose }: Props) {
             Write it by hand
           </dd>
         </div>
+        <div>
+          <dt className="text-[12px] font-semibold tracking-[0.06em] text-label uppercase">
+            Recovery code
+          </dt>
+          <dd className="mt-2 border-b border-text-soft pb-6" aria-label="Blank recovery line">
+            Write it by hand
+          </dd>
+        </div>
       </dl>
       <p className="text-[14px] text-text-soft">
-        If you forget the master password, this vault cannot be opened.
+        If you forget the master password, the recovery code is the only other way to open this
+        vault. This sheet never includes either one.
       </p>
       <div className="no-print flex gap-2">
         <button

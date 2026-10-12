@@ -45,6 +45,80 @@ pub async fn create_vault(app: AppHandle, master_password: String) -> CommandRes
 }
 
 #[tauri::command]
+pub async fn unlock_with_recovery(app: AppHandle, recovery_code: String) -> CommandResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .unlock_with_recovery(&SecretString::from(recovery_code))
+    })
+    .await
+    .map_err(|_| VaultError::Crypto)?
+}
+
+#[tauri::command]
+pub async fn create_recovery_code(app: AppHandle) -> CommandResult<crate::state::RecoveryCode> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().create_recovery_code())
+        .await
+        .map_err(|_| VaultError::Crypto)?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveVaultResult {
+    pub cancelled: bool,
+    pub path: Option<String>,
+}
+
+/// Opens the native folder dialog in Rust. The page never sends a path.
+#[tauri::command]
+pub async fn move_vault(app: AppHandle) -> CommandResult<MoveVaultResult> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose a folder for the vault")
+        .pick_folder(move |path| {
+            let _ = tx.send(path);
+        });
+    let picked = tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|_| VaultError::Crypto)?
+        .map_err(|_| VaultError::Crypto)?;
+    let Some(folder) = picked else {
+        return Ok(MoveVaultResult {
+            cancelled: true,
+            path: None,
+        });
+    };
+    let dest = folder
+        .into_path()
+        .map_err(|_| VaultError::Io(std::io::ErrorKind::InvalidInput))?;
+    let info = app.state::<AppState>().move_vault_to(&dest)?;
+    Ok(MoveVaultResult {
+        cancelled: false,
+        path: Some(info.path),
+    })
+}
+
+#[tauri::command]
+pub fn set_totp(state: State<'_, AppState>, id: String, mut secret: String) -> CommandResult<()> {
+    let result = state.set_totp(&id, &secret);
+    use zeroize::Zeroize;
+    secret.zeroize();
+    result
+}
+
+#[tauri::command]
+pub fn clear_totp(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.clear_totp(&id)
+}
+
+#[tauri::command]
+pub fn totp_code(state: State<'_, AppState>, id: String) -> CommandResult<crate::totp::TotpCode> {
+    state.totp_code(&id)
+}
+
+#[tauri::command]
 pub async fn unlock(app: AppHandle, master_password: String) -> CommandResult<()> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()

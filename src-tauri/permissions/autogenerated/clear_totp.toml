@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-totp"
+description = "Enables the clear_totp command without any pre-configured scope."
+commands.allow = ["clear_totp"]
+
+[[permission]]
+identifier = "deny-clear-totp"
+description = "Denies the clear_totp command without any pre-configured scope."
+commands.deny = ["clear_totp"]

@@ -38,6 +38,12 @@
     "allow-list-deleted-entries",
     "allow-copy-history-password",
     "allow-import-logins",
+    "allow-create-recovery-code",
+    "allow-unlock-with-recovery",
+    "allow-move-vault",
+    "allow-set-totp",
+    "allow-clear-totp",
+    "allow-totp-code",
     "dialog:allow-save",
     "dialog:allow-open",
     "core:app:default"

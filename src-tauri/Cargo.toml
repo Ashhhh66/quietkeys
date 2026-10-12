@@ -37,6 +37,8 @@ time = { version = "0.3.55", features = ["formatting", "parsing"] }
 tauri-plugin-dialog = "2.7.3"
 url = "2.5.8"
 tauri-plugin-opener = "2"
+hmac = "0.12"
+sha1 = "0.10"
 
 [dev-dependencies]
 # Already in Cargo.lock via other crates. Used only to check the bundled wordlist.

@@ -16,6 +16,8 @@ vi.mock("../api", async () => {
     changeMasterPassword: vi.fn(),
     exportVault: vi.fn(),
     importLogins: vi.fn(),
+    createRecoveryCode: vi.fn(),
+    moveVault: vi.fn(),
     vaultInfo: vi.fn(),
     showVaultInFolder: vi.fn(),
     openEncryptionReadme: vi.fn(),
@@ -25,6 +27,8 @@ vi.mock("../api", async () => {
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
 const exportVault = api.exportVault as unknown as ReturnType<typeof vi.fn>;
 const importLogins = api.importLogins as unknown as ReturnType<typeof vi.fn>;
+const createRecoveryCode = api.createRecoveryCode as unknown as ReturnType<typeof vi.fn>;
+const moveVault = api.moveVault as unknown as ReturnType<typeof vi.fn>;
 const changeMasterPassword = api.changeMasterPassword as unknown as ReturnType<typeof vi.fn>;
 const vaultInfo = api.vaultInfo as unknown as ReturnType<typeof vi.fn>;
 const showVaultInFolder = api.showVaultInFolder as unknown as ReturnType<typeof vi.fn>;
@@ -39,6 +43,8 @@ function info(backup: api.BackupStatus) {
     backup,
     kdf: "argon2id",
     cipher: "xchacha20poly1305",
+    hasRecovery: false,
+    viaRecovery: false,
   };
 }
 
@@ -48,6 +54,8 @@ beforeEach(() => {
     .mockResolvedValue({ score: 2, warning: "Short", suggestions: ["Add words"] });
   exportVault.mockReset();
   importLogins.mockReset();
+  createRecoveryCode.mockReset();
+  moveVault.mockReset();
   changeMasterPassword.mockReset();
   savedAt = new Date(Date.now() - 2 * 60_000).toISOString();
   vaultInfo.mockReset().mockResolvedValue(info({ status: "healthy", savedAt }));
@@ -159,7 +167,19 @@ describe("Settings", () => {
     await user.click(await screen.findByRole("button", { name: "Emergency Kit" }));
     expect(screen.getByRole("heading", { name: "Emergency Kit" })).toBeInTheDocument();
     expect(screen.getByLabelText("Blank line")).toHaveTextContent("Write it by hand");
+    expect(screen.getByLabelText("Blank recovery line")).toHaveTextContent("Write it by hand");
     expect(document.body.textContent).not.toContain("correct horse");
+  });
+
+  it("shows a recovery code once and does not print it on the kit", async () => {
+    createRecoveryCode.mockResolvedValue("alpha bravo charlie delta echo foxtrot golf hotel");
+    const user = userEvent.setup();
+    render(<Settings />);
+    await user.click(await screen.findByRole("button", { name: "Create a recovery code" }));
+    expect(await screen.findByLabelText("Recovery code")).toHaveTextContent("alpha bravo");
+    await user.click(screen.getByRole("button", { name: "Emergency Kit" }));
+    expect(screen.getByLabelText("Blank recovery line")).toHaveTextContent("Write it by hand");
+    expect(screen.getByLabelText("Blank recovery line").textContent).not.toContain("alpha bravo");
   });
 
   it("imports a CSV with no path and shows only the counts", async () => {

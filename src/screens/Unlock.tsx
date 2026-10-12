@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AlertCircle, Clock, Eye, EyeOff, LoaderCircle, Lock, ShieldCheck } from "lucide-react";
-import { isApiError, unlock } from "../api";
+import { isApiError, unlock, unlockWithRecovery } from "../api";
 import AuthCard, { ALERT, FIELD_INPUT, FIELD_LABEL, PRIMARY_BUTTON } from "../components/AuthCard";
 import RestoreBackup from "./RestoreBackup";
 
@@ -16,6 +16,7 @@ export default function Unlock({ onUnlocked }: Props) {
   const [capsLock, setCapsLock] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<Failure | null>(null);
+  const [useRecovery, setUseRecovery] = useState(false);
   const [throttleDeadline, setThrottleDeadline] = useState<number | null>(null);
   const [countdown, setCountdown] = useState(0);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -60,7 +61,11 @@ export default function Unlock({ onUnlocked }: Props) {
     setSubmitting(true);
     setFailure(null);
     try {
-      await unlock(password);
+      if (useRecovery) {
+        await unlockWithRecovery(password);
+      } else {
+        await unlock(password);
+      }
       onUnlocked();
     } catch (err) {
       if (isApiError(err)) {
@@ -89,12 +94,16 @@ export default function Unlock({ onUnlocked }: Props) {
           <Lock size={26} strokeWidth={2} aria-hidden />
         </span>
         <h1 className="text-[28px] font-semibold tracking-[-0.02em]">Welcome back</h1>
-        <p className="text-[14.5px] text-muted">Enter your master password to unlock your vault.</p>
+        <p className="text-[14.5px] text-muted">
+          {useRecovery
+            ? "Enter the recovery code you wrote down."
+            : "Enter your master password to unlock your vault."}
+        </p>
       </div>
       <form onSubmit={handleSubmit} className="flex flex-col gap-[22px]">
         <div className="flex flex-col gap-2">
           <label className={FIELD_LABEL} htmlFor="unlock-password">
-            Master password
+            {useRecovery ? "Recovery code" : "Master password"}
           </label>
           <div className="relative">
             <input
@@ -133,7 +142,9 @@ export default function Unlock({ onUnlocked }: Props) {
           <p role="alert" className={`${ALERT} border-error-border bg-error-bg text-error-fg`}>
             <AlertCircle size={16} strokeWidth={2} aria-hidden className="mt-px shrink-0" />
             {failure.kind === "wrong_password"
-              ? "Incorrect password or corrupted vault."
+              ? useRecovery
+                ? "That recovery code did not open the vault."
+                : "Incorrect password or corrupted vault."
               : failure.message}
           </p>
         )}
@@ -144,6 +155,17 @@ export default function Unlock({ onUnlocked }: Props) {
             {countdown === 1 ? "second" : "seconds"}.
           </p>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            setUseRecovery((current) => !current);
+            setPassword("");
+            setFailure(null);
+          }}
+          className="text-[13.5px] font-medium text-accent-text"
+        >
+          {useRecovery ? "Use master password" : "Use a recovery code"}
+        </button>
         <button type="submit" disabled={submitting || throttled} className={PRIMARY_BUTTON}>
           {throttled ? (
             `Try again in ${countdown}s`
