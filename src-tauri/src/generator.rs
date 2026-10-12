@@ -128,6 +128,16 @@ pub fn passphrase_entropy_bits(words: usize, add_number: bool) -> f64 {
     bits
 }
 
+/// Eight words from the EFF list, for a recovery code. Shown once. Not stored.
+pub fn recovery_code() -> Result<Zeroizing<String>> {
+    let list = wordlist();
+    let mut words = Vec::with_capacity(8);
+    for _ in 0..8 {
+        words.push(list[unbiased_index(list.len())?]);
+    }
+    Ok(Zeroizing::new(words.join(" ")))
+}
+
 pub fn generate_passphrase(options: &PassphraseOptions) -> Result<GeneratedSecret> {
     if !(MIN_WORDS..=MAX_WORDS).contains(&options.words) {
         return Err(VaultError::InvalidGeneratorOptions(

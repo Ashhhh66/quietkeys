@@ -10,14 +10,24 @@ import {
   type TextSize,
 } from "../appearance";
 import {
+  beginPairing,
   changeMasterPassword,
+  confirmPendingSave,
+  createRecoveryCode,
+  dismissPendingSave,
   exportVault,
   friendlyMessage,
   importLogins,
   isApiError,
+  listPairings,
+  moveVault,
   openEncryptionReadme,
+  pendingSave,
+  revokePairing,
   showVaultInFolder,
   vaultInfo,
+  type PairingInfo,
+  type PendingSaveInfo,
   type BackupStatus,
   type VaultInfo,
 } from "../api";
@@ -59,8 +69,19 @@ export default function Settings() {
   const [importing, setImporting] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [recoveryWords, setRecoveryWords] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [creatingRecovery, setCreatingRecovery] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [pairings, setPairings] = useState<PairingInfo[]>([]);
+  const [stagedSave, setStagedSave] = useState<PendingSaveInfo | null>(null);
 
-  const canChange = passwordChecklistPasses(next, confirm) && current.length > 0 && !submitting;
+  const canChange =
+    passwordChecklistPasses(next, confirm) &&
+    (info?.viaRecovery || current.length > 0) &&
+    !submitting;
 
   useEffect(() => {
     let cancelled = false;
@@ -78,10 +99,55 @@ export default function Settings() {
       .catch((err: unknown) => {
         if (!cancelled) setInfoError(friendlyMessage(err));
       });
+    listPairings()
+      .then((value) => {
+        if (!cancelled) setPairings(value);
+      })
+      .catch(() => {
+        if (!cancelled) setPairings([]);
+      });
+    pendingSave()
+      .then((value) => {
+        if (!cancelled) setStagedSave(value);
+      })
+      .catch(() => {
+        if (!cancelled) setStagedSave(null);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  async function handleRecovery() {
+    setCreatingRecovery(true);
+    setRecoveryError(null);
+    try {
+      const words = await createRecoveryCode();
+      setRecoveryWords(words);
+      setInfo((currentInfo) => (currentInfo ? { ...currentInfo, hasRecovery: true } : currentInfo));
+    } catch (err) {
+      setRecoveryError(friendlyMessage(err));
+    } finally {
+      setCreatingRecovery(false);
+    }
+  }
+
+  async function handleMove() {
+    setMoving(true);
+    setMoveError(null);
+    try {
+      const result = await moveVault();
+      if (!result.cancelled && result.path) {
+        setInfo((currentInfo) =>
+          currentInfo ? { ...currentInfo, path: result.path ?? currentInfo.path } : currentInfo,
+        );
+      }
+    } catch (err) {
+      setMoveError(friendlyMessage(err));
+    } finally {
+      setMoving(false);
+    }
+  }
 
   async function handleChange(e: FormEvent) {
     e.preventDefault();
@@ -240,6 +306,38 @@ export default function Settings() {
               >
                 Emergency Kit
               </button>
+              <button
+                type="button"
+                onClick={() => void handleRecovery()}
+                disabled={creatingRecovery || info?.hasRecovery}
+                className="mt-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
+              >
+                {info?.hasRecovery ? "Recovery code created" : "Create a recovery code"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleMove()}
+                disabled={moving}
+                className="mt-2 ml-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
+              >
+                {moving ? "Moving…" : "Move vault"}
+              </button>
+              {recoveryWords && (
+                <p className="mt-3 text-[14px] text-text" aria-label="Recovery code">
+                  Write these words down now. They will not be shown again.
+                  <span className="mt-1 block font-mono text-[13px]">{recoveryWords}</span>
+                </p>
+              )}
+              {recoveryError && (
+                <p role="alert" className="mt-2 text-[13.5px] text-error-fg">
+                  {recoveryError}
+                </p>
+              )}
+              {moveError && (
+                <p role="alert" className="mt-2 text-[13.5px] text-error-fg">
+                  {moveError}
+                </p>
+              )}
             </InfoCell>
           </div>
         )}
@@ -287,13 +385,15 @@ export default function Settings() {
           </div>
           <form onSubmit={handleChange} className="flex flex-col gap-4">
             <h4 className="text-[14px] font-semibold">Master password</h4>
-            <Field
-              id="current-master-password"
-              label="Current password"
-              value={current}
-              autoComplete="current-password"
-              onChange={setCurrent}
-            />
+            {!info?.viaRecovery && (
+              <Field
+                id="current-master-password"
+                label="Current password"
+                value={current}
+                autoComplete="current-password"
+                onChange={setCurrent}
+              />
+            )}
             <Field
               id="new-master-password"
               label="New password"
@@ -392,6 +492,74 @@ export default function Settings() {
           </fieldset>
         </section>
       </div>
+
+      <section className="flex max-w-[860px] flex-col gap-3 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+        <h3 className="text-[16px] font-semibold">Browser</h3>
+        <p className="text-[14px] text-text-soft">
+          Pair a browser, then type this code there. quietkeys stores only a hash of the pairing.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            void beginPairing()
+              .then(setPairingCode)
+              .catch((err: unknown) => setShowError(friendlyMessage(err)));
+          }}
+          className="h-8 w-fit rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg"
+        >
+          Pair a browser
+        </button>
+        {pairingCode && (
+          <p className="font-mono text-[22px] tracking-[0.18em]" aria-label="Pairing code">
+            {pairingCode}
+          </p>
+        )}
+        <ul className="flex flex-col gap-2">
+          {pairings.map((pairing) => (
+            <li key={pairing.id} className="flex items-center justify-between gap-3 text-[14px]">
+              <span>{pairing.label}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  void revokePairing(pairing.id).then(() =>
+                    setPairings((current) => current.filter((item) => item.id !== pairing.id)),
+                  );
+                }}
+                className="text-[13px] font-medium text-accent-text"
+              >
+                Revoke {pairing.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {stagedSave && (
+          <div className="rounded-[12px] border border-panel-border bg-panel px-3 py-3">
+            <p className="text-[14px] text-text">
+              Save a login for {stagedSave.host} as {stagedSave.username}?
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void confirmPendingSave().then(() => setStagedSave(null));
+                }}
+                className="h-8 rounded-[10px] bg-accent-gradient px-3 text-[13px] font-semibold text-on-accent"
+              >
+                Save login
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void dismissPendingSave().then(() => setStagedSave(null));
+                }}
+                className="h-8 rounded-[10px] border border-panel-border px-3 text-[13px] font-medium"
+              >
+                Don't save
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
 
       <footer className="flex max-w-[860px] items-center justify-between gap-4">
         <p className="text-[13px] text-muted">

@@ -48,15 +48,45 @@ pub struct CipherHeader {
     pub alg: String,
 }
 
+/// A data key sealed under another key. The nonce and ciphertext are not secret by
+/// themselves; the data key is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeySeal {
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+/// The recovery-code seal. Its KDF salt is not the master-password salt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverySeal {
+    pub kdf: KdfHeader,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
 /// The authenticated header. Field order is fixed by this struct, so serializing it always
-/// produces the same bytes for the same values.
+/// produces the same bytes for the same values. The seal fields are omitted on version 2,
+/// so those headers stay byte-for-byte the same.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Header {
     pub version: u32,
     pub kdf: KdfHeader,
     pub cipher: CipherHeader,
+    /// Present when the body is encrypted with a data key, version 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrapped_key: Option<KeySeal>,
+    /// Present when a recovery code can open the same data key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<RecoverySeal>,
 }
+
+const PASSWORD_WRAP_AAD: &[u8] = b"quietkeys-password-wrap";
+const RECOVERY_WRAP_AAD: &[u8] = b"quietkeys-recovery-wrap";
+/// Version written once a recovery code exists. Version 2 files stay version 2.
+pub const RECOVERY_VERSION: u32 = 3;
 
 impl Header {
     fn kdf_params(&self) -> KdfParams {
@@ -87,6 +117,10 @@ struct VaultFile {
     version: u32,
     kdf: KdfHeader,
     cipher: CipherSection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wrapped_key: Option<KeySeal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<RecoverySeal>,
     ciphertext: String,
 }
 
@@ -98,6 +132,8 @@ impl VaultFile {
             cipher: CipherHeader {
                 alg: self.cipher.alg.clone(),
             },
+            wrapped_key: self.wrapped_key.clone(),
+            recovery: self.recovery.clone(),
         }
     }
 }
@@ -134,6 +170,12 @@ pub struct Entry {
     /// Missing on a version 1 plaintext. Set means the login is in Recently deleted.
     #[serde(default)]
     pub deleted_at: Option<String>,
+    /// One-time-code secret. Never sent to the screen. Missing on older vaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totp_secret: Option<String>,
+    /// The user allowed this login to be filled on an http page. Missing means no.
+    #[serde(default)]
+    pub allow_http: bool,
 }
 
 impl fmt::Debug for Entry {
@@ -154,6 +196,10 @@ impl fmt::Debug for Entry {
                 &format!("<{} redacted>", self.password_history.len()),
             )
             .field("deleted_at", &self.deleted_at)
+            .field(
+                "totp_secret",
+                &self.totp_secret.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -167,7 +213,14 @@ pub struct VaultData {
 /// A decrypted vault held in memory. The key and data are wiped when this is dropped.
 pub struct UnlockedVault {
     header: Header,
+    /// Key that decrypts the body. On version 2 this is the password key. On version 3
+    /// it is the random data key.
     key: Key,
+    /// The password-derived key, kept so a version 2 backup can still be checked and so
+    /// a password change can re-seal the data key. Absent after a recovery unlock.
+    password_key: Option<Key>,
+    /// True when this session was opened with the recovery code, not the master password.
+    via_recovery: bool,
     pub data: VaultData,
     upgrade: Option<PendingUpgrade>,
 }
@@ -190,9 +243,36 @@ impl UnlockedVault {
         self.upgrade.is_some()
     }
 
+    pub fn has_recovery(&self) -> bool {
+        self.header.recovery.is_some()
+    }
+
+    pub fn via_recovery(&self) -> bool {
+        self.via_recovery
+    }
+
     /// Opens the `.bak` beside `vault_path` with this vault's key. No Argon2.
+    /// A version 2 backup still opens with the password key after recovery is enabled.
     pub fn backup_status(&self, vault_path: &Path) -> BackupStatus {
-        backup_status(vault_path, &self.key)
+        let path = backup_path(vault_path);
+        if !path.exists() {
+            return BackupStatus::Missing;
+        }
+        let Ok(bytes) = fs::read(&path) else {
+            return BackupStatus::Unreadable;
+        };
+        let opens = is_good_vault(&bytes, &self.key)
+            || self
+                .password_key
+                .as_ref()
+                .is_some_and(|key| is_good_vault(&bytes, key));
+        if !opens {
+            return BackupStatus::Unreadable;
+        }
+        match mtime_rfc3339(&path) {
+            Ok(saved_at) => BackupStatus::Healthy { saved_at },
+            Err(_) => BackupStatus::Unreadable,
+        }
     }
 }
 
@@ -232,6 +312,8 @@ pub(crate) fn create_with_params(
     let vault = UnlockedVault {
         header,
         key,
+        password_key: None,
+        via_recovery: false,
         data: VaultData::default(),
         upgrade: None,
     };
@@ -256,6 +338,8 @@ fn new_header_and_key(password: &SecretString, params: KdfParams) -> Result<(Hea
         cipher: CipherHeader {
             alg: CIPHER_ALG.to_string(),
         },
+        wrapped_key: None,
+        recovery: None,
     };
     Ok((header, key))
 }
@@ -278,16 +362,43 @@ pub fn load(path: &Path, password: &SecretString) -> Result<UnlockedVault> {
 
     let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
     let key = crypto::derive_key(password, &salt, &header.kdf_params())?;
-    let plaintext = decrypt_file(&file, &key)?;
-    let data: VaultData =
-        serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
+    let (key, password_key, data) = open_with_password_key(&file, key)?;
     let upgrade = prepare_upgrade(password, &header)?;
 
     Ok(UnlockedVault {
         header,
         key,
+        password_key,
+        via_recovery: false,
         data,
         upgrade,
+    })
+}
+
+/// Opens a version 3 vault with the recovery code. The master password is not required
+/// and is not stored. A wrong code is `DecryptFailed`.
+pub fn load_with_recovery(path: &Path, code: &SecretString) -> Result<UnlockedVault> {
+    let bytes = fs::read(path)?;
+    let file = parse_vault_file(&bytes)?;
+    let recovery = file.recovery.as_ref().ok_or(VaultError::DecryptFailed)?;
+    let salt: [u8; SALT_LEN] = decode_fixed(&recovery.kdf.salt)?;
+    let params = KdfParams {
+        m_kib: recovery.kdf.m_kib,
+        t: recovery.kdf.t,
+        p: recovery.kdf.p,
+    };
+    let recovery_key = crypto::derive_key(code, &salt, &params)?;
+    let content = unseal_recovery(&recovery_key, recovery)?;
+    let plaintext = decrypt_file(&file, &content)?;
+    let data: VaultData =
+        serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
+    Ok(UnlockedVault {
+        header: file.header(),
+        key: content,
+        password_key: None,
+        via_recovery: true,
+        data,
+        upgrade: None,
     })
 }
 
@@ -308,6 +419,88 @@ fn is_good_vault(bytes: &[u8], key: &Key) -> bool {
         .is_ok()
 }
 
+fn open_with_password_key(
+    file: &VaultFile,
+    password_key: Key,
+) -> Result<(Key, Option<Key>, VaultData)> {
+    if file.version >= RECOVERY_VERSION {
+        let seal = file.wrapped_key.as_ref().ok_or(VaultError::InvalidFormat)?;
+        let content = unseal(&password_key, seal, PASSWORD_WRAP_AAD)?;
+        let plaintext = decrypt_file(file, &content)?;
+        let data = serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
+        return Ok((content, Some(password_key), data));
+    }
+    let plaintext = decrypt_file(file, &password_key)?;
+    let data = serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
+    Ok((password_key, None, data))
+}
+
+fn seal_key(wrapping_key: &Key, content: &Key, aad: &[u8]) -> Result<KeySeal> {
+    let (nonce, ciphertext) = crypto::encrypt(wrapping_key, aad, &content[..])?;
+    Ok(KeySeal {
+        nonce: B64.encode(nonce),
+        ciphertext: B64.encode(ciphertext),
+    })
+}
+
+fn unseal(wrapping_key: &Key, seal: &KeySeal, aad: &[u8]) -> Result<Key> {
+    let nonce: [u8; NONCE_LEN] = decode_fixed(&seal.nonce)?;
+    let ciphertext = B64
+        .decode(&seal.ciphertext)
+        .map_err(|_| VaultError::DecryptFailed)?;
+    let plain = crypto::decrypt(wrapping_key, &nonce, aad, &ciphertext)?;
+    if plain.len() != crypto::KEY_LEN {
+        return Err(VaultError::DecryptFailed);
+    }
+    let mut key = Zeroizing::new([0u8; crypto::KEY_LEN]);
+    key.copy_from_slice(&plain);
+    Ok(key)
+}
+
+fn unseal_recovery(wrapping_key: &Key, recovery: &RecoverySeal) -> Result<Key> {
+    unseal(
+        wrapping_key,
+        &KeySeal {
+            nonce: recovery.nonce.clone(),
+            ciphertext: recovery.ciphertext.clone(),
+        },
+        RECOVERY_WRAP_AAD,
+    )
+}
+
+impl UnlockedVault {
+    /// Seals a new recovery code around the data key and switches the file to version 3.
+    /// The caller saves. The code itself is not stored.
+    pub fn enable_recovery(&mut self, code: &SecretString, params: KdfParams) -> Result<()> {
+        let content = if self.header.wrapped_key.is_some() {
+            self.key.clone()
+        } else {
+            let content = crypto::random_key()?;
+            let password_key = self.key.clone();
+            self.header.wrapped_key = Some(seal_key(&password_key, &content, PASSWORD_WRAP_AAD)?);
+            self.password_key = Some(password_key);
+            self.key = content.clone();
+            content
+        };
+        let salt = crypto::random_salt()?;
+        let recovery_key = crypto::derive_key(code, &salt, &params)?;
+        let seal = seal_key(&recovery_key, &content, RECOVERY_WRAP_AAD)?;
+        self.header.recovery = Some(RecoverySeal {
+            kdf: KdfHeader {
+                alg: KDF_ALG.to_string(),
+                m_kib: params.m_kib,
+                t: params.t,
+                p: params.p,
+                salt: B64.encode(salt),
+            },
+            nonce: seal.nonce,
+            ciphertext: seal.ciphertext,
+        });
+        self.header.version = RECOVERY_VERSION;
+        Ok(())
+    }
+}
+
 /// Encrypts the vault with a fresh nonce and writes it to `path` atomically.
 ///
 /// Before writing, the current file is copied to `<path>.bak`, but only if it decrypts
@@ -316,14 +509,7 @@ fn is_good_vault(bytes: &[u8], key: &Key) -> bool {
 /// If an upgrade is pending, the new file uses the upgraded header and key, and the vault
 /// switches to them once the write has succeeded.
 pub fn save(vault: &mut UnlockedVault, path: &Path) -> Result<()> {
-    let (header, key) = match &vault.upgrade {
-        Some(upgrade) => (&upgrade.header, &upgrade.key),
-        None => (&vault.header, &vault.key),
-    };
-    let mut header = header.clone();
-    if header.version < FORMAT_VERSION {
-        header.version = FORMAT_VERSION;
-    }
+    let (header, body_key) = header_and_body_key_for_save(vault)?;
 
     if path.exists() {
         let current = fs::read(path)?;
@@ -333,19 +519,61 @@ pub fn save(vault: &mut UnlockedVault, path: &Path) -> Result<()> {
         if on_disk_version(&current) == Some(1) {
             preserve_v1_backup(path, &current)?;
         }
-        if is_good_vault(&current, &vault.key) {
+        if file_opens_for_backup(&current, vault) {
             write_atomic(&backup_path(path), &current)?;
         }
     }
-    let bytes = encrypt_to_file_bytes(&vault.data, &header, key)?;
+    let bytes = encrypt_to_file_bytes(&vault.data, &header, &body_key)?;
     write_atomic(path, &bytes)?;
 
     if let Some(upgrade) = vault.upgrade.take() {
-        vault.header = upgrade.header;
-        vault.key = upgrade.key;
+        if header.wrapped_key.is_some() {
+            vault.password_key = Some(upgrade.key);
+            vault.header = header;
+        } else {
+            vault.header = upgrade.header;
+            vault.key = upgrade.key;
+        }
+    } else {
+        vault.header = header;
     }
-    vault.header.version = FORMAT_VERSION;
+    if vault.header.version < FORMAT_VERSION {
+        vault.header.version = FORMAT_VERSION;
+    }
     Ok(())
+}
+
+/// Version 2 encrypts the body with the password key. Version 3 encrypts it with the
+/// data key. A pending KDF upgrade re-seals that data key instead of replacing it.
+fn header_and_body_key_for_save(vault: &UnlockedVault) -> Result<(Header, Key)> {
+    if let Some(upgrade) = &vault.upgrade {
+        if vault.header.wrapped_key.is_some() {
+            let mut header = upgrade.header.clone();
+            header.version = RECOVERY_VERSION;
+            header.wrapped_key = Some(seal_key(&upgrade.key, &vault.key, PASSWORD_WRAP_AAD)?);
+            header.recovery = vault.header.recovery.clone();
+            return Ok((header, vault.key.clone()));
+        }
+        let mut header = upgrade.header.clone();
+        if header.version < FORMAT_VERSION {
+            header.version = FORMAT_VERSION;
+        }
+        return Ok((header, upgrade.key.clone()));
+    }
+    let mut header = vault.header.clone();
+    if header.version < FORMAT_VERSION {
+        header.version = FORMAT_VERSION;
+    }
+    Ok((header, vault.key.clone()))
+}
+
+/// The body key opens the ciphertext. A version 2 backup still opens with the password key.
+fn file_opens_for_backup(bytes: &[u8], vault: &UnlockedVault) -> bool {
+    is_good_vault(bytes, &vault.key)
+        || vault
+            .password_key
+            .as_ref()
+            .is_some_and(|key| is_good_vault(bytes, key))
 }
 
 // Covers the JSON keys and punctuation of one entry (about 100 bytes) plus some escaping.
@@ -367,6 +595,7 @@ fn estimated_json_len(data: &VaultData) -> usize {
                 + e.updated_at.len()
                 + e.last_used_at.as_ref().map_or(0, String::len)
                 + e.deleted_at.as_ref().map_or(0, String::len)
+                + e.totp_secret.as_ref().map_or(0, String::len)
                 + e.password_history
                     .iter()
                     .map(|item| item.id.len() + item.password.len() + item.replaced_at.len())
@@ -396,9 +625,66 @@ fn encrypt_to_file_bytes(data: &VaultData, header: &Header, key: &Key) -> Result
             alg: header.cipher.alg.clone(),
             nonce: B64.encode(nonce),
         },
+        wrapped_key: header.wrapped_key.clone(),
+        recovery: header.recovery.clone(),
         ciphertext: B64.encode(ciphertext),
     };
     serde_json::to_vec_pretty(&file).map_err(|_| VaultError::InvalidFormat)
+}
+
+pub const LOCATION_FILE_NAME: &str = "vault-location.txt";
+
+/// The vault file to open. A missing or unusable pointer means the file in app data.
+pub fn resolve_vault_path(data_dir: &Path) -> PathBuf {
+    let pointer = data_dir.join(LOCATION_FILE_NAME);
+    if let Ok(text) = fs::read_to_string(pointer) {
+        let path = PathBuf::from(text.trim());
+        if path.is_absolute()
+            && path.file_name().and_then(|name| name.to_str()) == Some(VAULT_FILE_NAME)
+        {
+            return path;
+        }
+    }
+    data_dir.join(VAULT_FILE_NAME)
+}
+
+/// Moves the vault and its sibling backups into `dest_dir`. Refuses if that folder
+/// already has a vault, without reading it. Writes the new path into app data.
+pub fn move_vault_files(data_dir: &Path, from: &Path, dest_dir: &Path) -> Result<PathBuf> {
+    let dest = dest_dir.join(VAULT_FILE_NAME);
+    if dest == from {
+        return Ok(dest);
+    }
+    if dest.exists() {
+        return Err(VaultError::LocationTaken);
+    }
+    if let Err(err) = fs::rename(from, &dest) {
+        return Err(err.into());
+    }
+    let mut moved = vec![(from.to_path_buf(), dest.clone())];
+    for sibling in [backup_path(from), v1_backup_path(from)] {
+        if !sibling.exists() {
+            continue;
+        }
+        let target = dest_dir.join(sibling.file_name().unwrap_or_default());
+        if let Err(err) = fs::rename(&sibling, &target) {
+            restore_moves(&moved);
+            return Err(err.into());
+        }
+        moved.push((sibling, target));
+    }
+    let pointer = format!("{}\n", dest.display());
+    if let Err(err) = write_atomic(&data_dir.join(LOCATION_FILE_NAME), pointer.as_bytes()) {
+        restore_moves(&moved);
+        return Err(err);
+    }
+    Ok(dest)
+}
+
+fn restore_moves(moved: &[(PathBuf, PathBuf)]) {
+    for (from, dest) in moved.iter().rev() {
+        let _ = fs::rename(dest, from);
+    }
 }
 
 pub fn backup_path(path: &Path) -> PathBuf {
@@ -584,7 +870,7 @@ pub(crate) fn verify_current_master_password(path: &Path, current: &SecretString
     let header = file.header();
     let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
     let derived = crypto::derive_key(current, &salt, &header.kdf_params())?;
-    decrypt_file(&file, &derived)?;
+    open_with_password_key(&file, derived)?;
     Ok(())
 }
 
@@ -611,10 +897,25 @@ pub(crate) fn write_rekeyed_vault(
             preserve_v1_backup(path, &current)?;
         }
     }
-    let new_bytes = encrypt_to_file_bytes(&vault.data, &prepared.header, &prepared.key)?;
+    let (header, body_key) = if vault.header.wrapped_key.is_some() {
+        let mut header = prepared.header.clone();
+        header.version = RECOVERY_VERSION;
+        header.wrapped_key = Some(seal_key(&prepared.key, &vault.key, PASSWORD_WRAP_AAD)?);
+        header.recovery = vault.header.recovery.clone();
+        (header, vault.key.clone())
+    } else {
+        (prepared.header.clone(), prepared.key.clone())
+    };
+    let new_bytes = encrypt_to_file_bytes(&vault.data, &header, &body_key)?;
     write_atomic(path, &new_bytes)?;
-    vault.header = prepared.header;
-    vault.key = prepared.key;
+    if vault.header.wrapped_key.is_some() {
+        vault.password_key = Some(prepared.key);
+        vault.header = header;
+        vault.via_recovery = false;
+    } else {
+        vault.header = prepared.header;
+        vault.key = prepared.key;
+    }
     vault.upgrade = None;
     Ok(())
 }
@@ -670,10 +971,8 @@ pub fn restore_replacing(vault_path: &Path, password: &SecretString) -> Result<U
     let file = parse_vault_file(&bak_bytes)?;
     let header = file.header();
     let salt: [u8; SALT_LEN] = decode_fixed(&header.kdf.salt)?;
-    let key = crypto::derive_key(password, &salt, &header.kdf_params())?;
-    let plaintext = decrypt_file(&file, &key)?;
-    let data: VaultData =
-        serde_json::from_slice(&plaintext).map_err(|_| VaultError::InvalidFormat)?;
+    let derived = crypto::derive_key(password, &salt, &header.kdf_params())?;
+    let (key, password_key, data) = open_with_password_key(&file, derived)?;
     let upgrade = prepare_upgrade(password, &header)?;
 
     let had_current = vault_path.exists();
@@ -691,6 +990,8 @@ pub fn restore_replacing(vault_path: &Path, password: &SecretString) -> Result<U
     Ok(UnlockedVault {
         header,
         key,
+        password_key,
+        via_recovery: false,
         data,
         upgrade,
     })
@@ -730,7 +1031,7 @@ fn migrate(value: Value) -> Result<Value> {
         // Version 1 is decrypted with its original header (the version is part of
         // the AAD). The plaintext gains the v2 entry fields via serde defaults.
         // The next save writes version 2.
-        1 | FORMAT_VERSION => Ok(value),
+        1 | FORMAT_VERSION | RECOVERY_VERSION => Ok(value),
         other => Err(VaultError::UnsupportedVersion(other)),
     }
 }
@@ -845,6 +1146,8 @@ mod tests {
             last_used_at: None,
             password_history: Vec::new(),
             deleted_at: None,
+            totp_secret: None,
+            allow_http: false,
         }
     }
 
@@ -1088,9 +1391,62 @@ mod tests {
         new_vault(&dir);
         let path = dir.vault_path();
         let mut json = read_json(&path);
-        json["version"] = Value::from(3);
+        json["version"] = Value::from(4);
         write_json(&path, &json);
-        assert_eq!(load_err(&path), VaultError::UnsupportedVersion(3));
+        assert_eq!(load_err(&path), VaultError::UnsupportedVersion(4));
+    }
+
+    #[test]
+    fn recovery_code_opens_version_3_and_a_password_change_keeps_it() {
+        let dir = TestDir::new();
+        let path = dir.vault_path();
+        let mut vault = new_vault(&dir);
+        assert_eq!(read_json(&path)["version"], 2);
+
+        let code = SecretString::from("alpha bravo charlie delta echo foxtrot golf hotel");
+        vault.enable_recovery(&code, KdfParams::fast()).unwrap();
+        save(&mut vault, &path).unwrap();
+        let json = read_json(&path);
+        assert_eq!(json["version"], 3);
+        assert!(json.get("wrapped_key").is_some());
+        assert!(json.get("recovery").is_some());
+
+        let opened = load(&path, &password()).unwrap();
+        assert!(opened.has_recovery());
+        let recovered = load_with_recovery(&path, &code).unwrap();
+        assert!(recovered.via_recovery());
+        assert_eq!(recovered.data.entries.len(), opened.data.entries.len());
+        assert!(load_with_recovery(
+            &path,
+            &SecretString::from("nope nope nope nope nope nope nope nope")
+        )
+        .is_err());
+
+        let replacement = SecretString::from("a-brand-new-master-password");
+        let prepared = derive_new_master_key(&replacement, KdfParams::fast()).unwrap();
+        let mut session = load_with_recovery(&path, &code).unwrap();
+        write_rekeyed_vault(&mut session, &path, prepared).unwrap();
+        assert!(!load(&path, &replacement).unwrap().via_recovery());
+        assert!(load_with_recovery(&path, &code).unwrap().via_recovery());
+    }
+
+    #[test]
+    fn moving_a_vault_refuses_a_folder_that_already_has_one() {
+        let dir = TestDir::new();
+        let vault = new_vault(&dir);
+        let _ = vault;
+        let dest = dir.0.join("elsewhere");
+        fs::create_dir(&dest).unwrap();
+        let moved = move_vault_files(&dir.0, &dir.vault_path(), &dest).unwrap();
+        assert!(moved.ends_with(VAULT_FILE_NAME));
+        assert!(!dir.vault_path().exists());
+        assert!(moved.exists());
+        let again = TestDir::new();
+        let _ = new_vault(&again);
+        let occupied = again.0.clone();
+        let err = move_vault_files(&dir.0, &moved, &occupied).unwrap_err();
+        assert_eq!(err, VaultError::LocationTaken);
+        assert!(moved.exists());
     }
 
     #[test]

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - After a new vault is created, quietkeys explains that the master password cannot be recovered and can print an Emergency Kit. The kit leaves the password blank.
 - Logins can be imported from a CSV. The file is chosen in the app, and the screen shows only how many were added.
+- A recovery code can open a vault when the master password is forgotten. It is shown once and is not stored. Existing vaults stay on format version 2 until a code is created.
+- The vault file can be moved to another folder. A folder that already has a vault is refused.
+- A login can store a one-time code. The secret stays in the vault; the screen shows the current code.
+- A browser can be paired from Settings. The app stores a hash of the pairing token, and a locked vault answers no login request. The extension itself is not part of this version.
 
 ### Fixed
 

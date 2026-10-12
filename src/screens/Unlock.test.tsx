@@ -6,10 +6,11 @@ import * as api from "../api";
 
 vi.mock("../api", async () => {
   const actual = await vi.importActual<typeof api>("../api");
-  return { ...actual, unlock: vi.fn(), restoreFromBackup: vi.fn() };
+  return { ...actual, unlock: vi.fn(), unlockWithRecovery: vi.fn(), restoreFromBackup: vi.fn() };
 });
 
 const unlockMock = api.unlock as unknown as ReturnType<typeof vi.fn>;
+const recoveryMock = api.unlockWithRecovery as unknown as ReturnType<typeof vi.fn>;
 const restoreMock = api.restoreFromBackup as unknown as ReturnType<typeof vi.fn>;
 
 function passwordField(): HTMLInputElement {
@@ -18,6 +19,7 @@ function passwordField(): HTMLInputElement {
 
 beforeEach(() => {
   unlockMock.mockReset();
+  recoveryMock.mockReset();
   restoreMock.mockReset();
 });
 
@@ -35,6 +37,20 @@ describe("Unlock", () => {
     await waitFor(() => expect(onUnlocked).toHaveBeenCalledTimes(1));
     expect(unlockMock).toHaveBeenCalledWith("correct horse battery staple");
     expect(input).toHaveValue("");
+  });
+
+  it("unlocks with a recovery code", async () => {
+    recoveryMock.mockResolvedValue(undefined);
+    const onUnlocked = vi.fn();
+    const user = userEvent.setup();
+    render(<Unlock onUnlocked={onUnlocked} />);
+    await user.click(screen.getByRole("button", { name: "Use a recovery code" }));
+    const input = passwordField();
+    await user.type(input, "alpha bravo charlie delta echo foxtrot golf hotel");
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+    await waitFor(() => expect(onUnlocked).toHaveBeenCalledTimes(1));
+    expect(recoveryMock).toHaveBeenCalledWith("alpha bravo charlie delta echo foxtrot golf hotel");
+    expect(unlockMock).not.toHaveBeenCalled();
   });
 
   it("shows the generic message and clears the field on a wrong password", async () => {

@@ -252,8 +252,8 @@ The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROAD
 - [x] Phase 5: polish, installers and CI, ending with the v1 release
 - [x] 1.1: vault health
 - [x] Phase 6: onboarding and Emergency Kit, import
-- [ ] Phase 7: recovery code with vault format v2, choosing the vault location with conflict detection, TOTP
-- [ ] Phase 8: native host and pairing
+- [x] Phase 7: recovery code (vault format version 3), choosing the vault location with conflict detection, TOTP
+- [x] Phase 8: native host and pairing
 - [ ] Phase 9: browser extension
 
 ## License

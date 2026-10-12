@@ -19,6 +19,8 @@ export type ApiErrorKind =
   | "unsupported"
   | "website_not_opened"
   | "import_refused"
+  | "location_taken"
+  | "rejected"
   | "invalid_generator_options"
   | "crypto"
   | "io";
@@ -55,6 +57,10 @@ export function friendlyMessage(err: unknown): string {
       return err.message;
     case "import_refused":
       return "That file can't be imported.";
+    case "location_taken":
+      return "That folder already has a vault.";
+    case "rejected":
+      return "That request was rejected.";
     default:
       return err.message;
   }
@@ -119,6 +125,9 @@ export interface EntryDetails {
   updatedAt: string;
   /** Previous passwords by id and date. The passwords themselves are not included. */
   history?: HistoryMeta[];
+  /** A one-time code is set. The secret is not included. */
+  totp?: boolean;
+  allowHttp?: boolean;
 }
 
 export interface EntryInput {
@@ -170,6 +179,58 @@ export const createVault = (masterPassword: string): Promise<void> =>
   call("create_vault", { masterPassword });
 
 export const unlock = (masterPassword: string): Promise<void> => call("unlock", { masterPassword });
+
+export const unlockWithRecovery = (recoveryCode: string): Promise<void> =>
+  call("unlock_with_recovery", { recoveryCode });
+
+/** Shown once. The app does not keep a copy. */
+export const createRecoveryCode = (): Promise<string> => call("create_recovery_code");
+
+export interface MoveVaultResult {
+  cancelled: boolean;
+  path: string | null;
+}
+
+/** The folder dialog runs in Rust. The UI sends no path. */
+export const moveVault = (): Promise<MoveVaultResult> => call("move_vault");
+
+export const setTotp = (id: string, secret: string): Promise<void> =>
+  call("set_totp", { id, secret });
+
+export const clearTotp = (id: string): Promise<void> => call("clear_totp", { id });
+
+export interface TotpCode {
+  code: string;
+  secondsRemaining: number;
+}
+
+export const totpCode = (id: string): Promise<TotpCode> => call("totp_code", { id });
+
+export const beginPairing = (): Promise<string> => call("begin_pairing");
+
+export interface PairingInfo {
+  id: string;
+  label: string;
+  createdAt: string;
+}
+
+export const listPairings = (): Promise<PairingInfo[]> => call("list_pairings");
+
+export const revokePairing = (id: string): Promise<void> => call("revoke_pairing", { id });
+
+export interface PendingSaveInfo {
+  host: string;
+  username: string;
+}
+
+export const pendingSave = (): Promise<PendingSaveInfo | null> => call("pending_save");
+
+export const confirmPendingSave = (): Promise<void> => call("confirm_pending_save");
+
+export const dismissPendingSave = (): Promise<void> => call("dismiss_pending_save");
+
+export const setAllowHttp = (id: string, allow: boolean): Promise<void> =>
+  call("set_allow_http", { id, allow });
 
 export const lock = (): Promise<void> => call("lock");
 
@@ -237,6 +298,8 @@ export interface VaultInfo {
   backup: BackupStatus;
   kdf: string;
   cipher: string;
+  hasRecovery: boolean;
+  viaRecovery: boolean;
 }
 
 export type BackupStatus =

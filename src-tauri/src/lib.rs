@@ -1,11 +1,14 @@
 pub mod clipboard;
 pub mod commands;
 pub mod crypto;
+pub mod domain;
 pub mod error;
 pub mod generator;
 pub mod health;
+pub mod host;
 pub mod import;
 pub mod state;
+pub mod totp;
 pub mod vault;
 pub mod website;
 
@@ -28,7 +31,8 @@ pub fn run() {
         .setup(|app| {
             let dir = app.path().app_local_data_dir()?;
             create_private_dir(&dir)?;
-            app.manage(AppState::new(dir.join(vault::VAULT_FILE_NAME)));
+            app.manage(AppState::open(dir));
+            crate::host::spawn_for_app(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -65,6 +69,19 @@ pub fn run() {
             commands::list_deleted_entries,
             commands::copy_history_password,
             commands::import_logins,
+            commands::create_recovery_code,
+            commands::unlock_with_recovery,
+            commands::move_vault,
+            commands::set_totp,
+            commands::clear_totp,
+            commands::totp_code,
+            commands::begin_pairing,
+            commands::list_pairings,
+            commands::revoke_pairing,
+            commands::pending_save,
+            commands::confirm_pending_save,
+            commands::dismiss_pending_save,
+            commands::set_allow_http,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

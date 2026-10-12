@@ -112,6 +112,13 @@ pub fn random_salt() -> Result<[u8; SALT_LEN]> {
     Ok(salt)
 }
 
+/// A fresh 32-byte key from the operating system's CSPRNG.
+pub fn random_key() -> Result<Key> {
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
+    fill_random(&mut *key)?;
+    Ok(key)
+}
+
 /// Unicode general category Zs (space separators), unchanged since Unicode 6.3.
 const SPACE_SEPARATORS: [char; 17] = [
     '\u{0020}', '\u{00A0}', '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}',

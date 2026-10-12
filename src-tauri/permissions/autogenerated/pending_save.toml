@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pending-save"
+description = "Enables the pending_save command without any pre-configured scope."
+commands.allow = ["pending_save"]
+
+[[permission]]
+identifier = "deny-pending-save"
+description = "Denies the pending_save command without any pre-configured scope."
+commands.deny = ["pending_save"]

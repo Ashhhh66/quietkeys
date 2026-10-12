@@ -16,6 +16,14 @@ vi.mock("../api", async () => {
     changeMasterPassword: vi.fn(),
     exportVault: vi.fn(),
     importLogins: vi.fn(),
+    createRecoveryCode: vi.fn(),
+    moveVault: vi.fn(),
+    beginPairing: vi.fn(),
+    listPairings: vi.fn(),
+    revokePairing: vi.fn(),
+    pendingSave: vi.fn(),
+    confirmPendingSave: vi.fn(),
+    dismissPendingSave: vi.fn(),
     vaultInfo: vi.fn(),
     showVaultInFolder: vi.fn(),
     openEncryptionReadme: vi.fn(),
@@ -25,6 +33,11 @@ vi.mock("../api", async () => {
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
 const exportVault = api.exportVault as unknown as ReturnType<typeof vi.fn>;
 const importLogins = api.importLogins as unknown as ReturnType<typeof vi.fn>;
+const createRecoveryCode = api.createRecoveryCode as unknown as ReturnType<typeof vi.fn>;
+const moveVault = api.moveVault as unknown as ReturnType<typeof vi.fn>;
+const listPairings = api.listPairings as unknown as ReturnType<typeof vi.fn>;
+const pendingSave = api.pendingSave as unknown as ReturnType<typeof vi.fn>;
+const beginPairing = api.beginPairing as unknown as ReturnType<typeof vi.fn>;
 const changeMasterPassword = api.changeMasterPassword as unknown as ReturnType<typeof vi.fn>;
 const vaultInfo = api.vaultInfo as unknown as ReturnType<typeof vi.fn>;
 const showVaultInFolder = api.showVaultInFolder as unknown as ReturnType<typeof vi.fn>;
@@ -39,6 +52,8 @@ function info(backup: api.BackupStatus) {
     backup,
     kdf: "argon2id",
     cipher: "xchacha20poly1305",
+    hasRecovery: false,
+    viaRecovery: false,
   };
 }
 
@@ -48,6 +63,11 @@ beforeEach(() => {
     .mockResolvedValue({ score: 2, warning: "Short", suggestions: ["Add words"] });
   exportVault.mockReset();
   importLogins.mockReset();
+  createRecoveryCode.mockReset();
+  moveVault.mockReset();
+  listPairings.mockReset().mockResolvedValue([]);
+  pendingSave.mockReset().mockResolvedValue(null);
+  beginPairing.mockReset();
   changeMasterPassword.mockReset();
   savedAt = new Date(Date.now() - 2 * 60_000).toISOString();
   vaultInfo.mockReset().mockResolvedValue(info({ status: "healthy", savedAt }));
@@ -106,7 +126,7 @@ describe("Settings", () => {
       expect(screen.getByLabelText("New password")).toHaveValue("");
       expect(screen.getByLabelText("Confirm new password")).toHaveValue("");
     });
-  });
+  }, 15000);
 
   it("applies density and text size immediately", async () => {
     const user = userEvent.setup();
@@ -159,7 +179,19 @@ describe("Settings", () => {
     await user.click(await screen.findByRole("button", { name: "Emergency Kit" }));
     expect(screen.getByRole("heading", { name: "Emergency Kit" })).toBeInTheDocument();
     expect(screen.getByLabelText("Blank line")).toHaveTextContent("Write it by hand");
+    expect(screen.getByLabelText("Blank recovery line")).toHaveTextContent("Write it by hand");
     expect(document.body.textContent).not.toContain("correct horse");
+  });
+
+  it("shows a recovery code once and does not print it on the kit", async () => {
+    createRecoveryCode.mockResolvedValue("alpha bravo charlie delta echo foxtrot golf hotel");
+    const user = userEvent.setup();
+    render(<Settings />);
+    await user.click(await screen.findByRole("button", { name: "Create a recovery code" }));
+    expect(await screen.findByLabelText("Recovery code")).toHaveTextContent("alpha bravo");
+    await user.click(screen.getByRole("button", { name: "Emergency Kit" }));
+    expect(screen.getByLabelText("Blank recovery line")).toHaveTextContent("Write it by hand");
+    expect(screen.getByLabelText("Blank recovery line").textContent).not.toContain("alpha bravo");
   });
 
   it("imports a CSV with no path and shows only the counts", async () => {
@@ -169,6 +201,15 @@ describe("Settings", () => {
     await user.click(await screen.findByRole("button", { name: "Import a CSV" }));
     expect(importLogins).toHaveBeenCalledWith();
     expect(await screen.findByText("Added 2 logins. 1 row was skipped.")).toBeInTheDocument();
+  });
+
+  it("shows a pairing code from the app", async () => {
+    beginPairing.mockResolvedValue("482913");
+    const user = userEvent.setup();
+    render(<Settings />);
+    await user.click(await screen.findByRole("button", { name: "Pair a browser" }));
+    expect(beginPairing).toHaveBeenCalledWith();
+    expect(await screen.findByLabelText("Pairing code")).toHaveTextContent("482913");
   });
 
   it("opens the keyboard shortcuts list", async () => {

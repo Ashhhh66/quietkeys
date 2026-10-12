@@ -119,6 +119,10 @@ pub struct VaultInfo {
     pub backup: vault::BackupStatus,
     pub kdf: String,
     pub cipher: String,
+    pub has_recovery: bool,
+    /// This session was opened with the recovery code, so a new master password
+    /// does not need the old one.
+    pub via_recovery: bool,
 }
 
 /// One row of the entry list. Deliberately has no password or notes field.
@@ -170,6 +174,10 @@ pub struct EntryDetails {
     pub updated_at: String,
     /// Previous passwords by id and date only. The passwords themselves are not here.
     pub history: Vec<HistoryMeta>,
+    /// A one-time code is set. The secret itself is not included.
+    pub totp: bool,
+    /// The user allowed filling this login on an http page.
+    pub allow_http: bool,
 }
 
 impl From<&Entry> for EntryDetails {
@@ -190,7 +198,29 @@ impl From<&Entry> for EntryDetails {
                     replaced_at: item.replaced_at.clone(),
                 })
                 .collect(),
+            totp: entry.totp_secret.is_some(),
+            allow_http: entry.allow_http,
         }
+    }
+}
+
+pub(crate) struct HostMatch {
+    pub id: String,
+    pub title: String,
+    pub username: String,
+}
+
+pub(crate) struct HostSecret {
+    pub username: String,
+    pub password: Zeroizing<String>,
+}
+
+/// Shown once. Not stored, and not written to logs.
+pub struct RecoveryCode(pub Zeroizing<String>);
+
+impl Serialize for RecoveryCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
     }
 }
 
@@ -247,7 +277,11 @@ fn throttle_delay(consecutive_failures: u32) -> Option<Duration> {
 }
 
 pub struct AppState {
-    vault_path: PathBuf,
+    /// The app data directory. The location pointer lives here even after the vault moves.
+    data_dir: PathBuf,
+    vault_path: Mutex<PathBuf>,
+    pub(crate) pending_pair: Mutex<Option<crate::host::PendingPair>>,
+    pub(crate) pending_save: Mutex<Option<crate::host::PendingSave>>,
     unlocked: Mutex<Option<UnlockedVault>>,
     throttle: Mutex<ThrottleState>,
     /// Held for the whole body of `create_vault`, `unlock`, `change_master_password`, and
@@ -283,8 +317,22 @@ impl AppState {
         Self::with_clock(vault_path, Arc::new(SystemClock))
     }
 
-    fn with_clock(vault_path: PathBuf, clock: Arc<dyn Clock>) -> Self {
+    /// Opens the vault recorded in `data_dir`, or the default file there.
+    pub fn open(data_dir: PathBuf) -> Self {
+        let vault_path = vault::resolve_vault_path(&data_dir);
         Self::assemble(
+            data_dir,
+            vault_path,
+            Arc::new(SystemClock),
+            Arc::new(clipboard::OsClipboard),
+            clipboard::CLEAR_AFTER,
+        )
+    }
+
+    fn with_clock(vault_path: PathBuf, clock: Arc<dyn Clock>) -> Self {
+        let data_dir = vault_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        Self::assemble(
+            data_dir,
             vault_path,
             clock,
             Arc::new(clipboard::OsClipboard),
@@ -293,13 +341,17 @@ impl AppState {
     }
 
     fn assemble(
+        data_dir: PathBuf,
         vault_path: PathBuf,
         clock: Arc<dyn Clock>,
         clipboard: Arc<dyn ConcealedClipboard>,
         clipboard_clear_after: Duration,
     ) -> Self {
         Self {
-            vault_path,
+            data_dir,
+            vault_path: Mutex::new(vault_path),
+            pending_pair: Mutex::new(None),
+            pending_save: Mutex::new(None),
             unlocked: Mutex::new(None),
             throttle: Mutex::new(ThrottleState::default()),
             single_flight: Mutex::new(()),
@@ -349,12 +401,20 @@ impl AppState {
         }
     }
 
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    fn vault_file(&self) -> PathBuf {
+        self.vault_path.lock().unwrap().clone()
+    }
+
     pub fn vault_exists(&self) -> bool {
-        self.vault_path.exists()
+        self.vault_file().exists()
     }
 
     pub fn backup_exists(&self) -> bool {
-        vault::backup_path(&self.vault_path).exists()
+        vault::backup_path(&self.vault_file()).exists()
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -366,7 +426,7 @@ impl AppState {
     /// Fails with `Busy` if another slow vault operation is already running.
     pub fn create_vault(&self, password: &SecretString) -> Result<()> {
         let _slot = self.enter_single_flight()?;
-        let vault = vault::create(&self.vault_path, password)?;
+        let vault = vault::create(&self.vault_file(), password)?;
         *self.guard() = Some(vault);
         Ok(())
     }
@@ -387,7 +447,7 @@ impl AppState {
             return Err(VaultError::Throttled { seconds_remaining });
         }
 
-        match vault::load(&self.vault_path, password) {
+        match vault::load(&self.vault_file(), password) {
             Ok(vault) => {
                 *self.guard() = Some(vault);
                 self.reset_throttle();
@@ -448,6 +508,7 @@ impl AppState {
         self.clear_copied();
         *self.guard() = None;
         self.clear_health_cache();
+        crate::host::clear_pending(self);
     }
 
     /// Verifies `current` by decrypting the vault file with it, then re-encrypts under
@@ -471,11 +532,14 @@ impl AppState {
             return Err(VaultError::Locked);
         }
 
-        if let Err(err) = vault::verify_current_master_password(&self.vault_path, current) {
-            if err == VaultError::DecryptFailed {
-                self.record_wrong_password(now);
+        let via_recovery = self.with_vault(|vault, _| Ok(vault.via_recovery()))?;
+        if !via_recovery {
+            if let Err(err) = vault::verify_current_master_password(&self.vault_file(), current) {
+                if err == VaultError::DecryptFailed {
+                    self.record_wrong_password(now);
+                }
+                return Err(err);
             }
-            return Err(err);
         }
         vault::check_new_master_password(new_password)?;
 
@@ -492,8 +556,8 @@ impl AppState {
             drop(prepared);
             return Err(VaultError::Locked);
         };
-        vault::write_rekeyed_vault(vault, &self.vault_path, prepared)?;
-        vault::copy_vault_over_backup(vault, &self.vault_path)?;
+        vault::write_rekeyed_vault(vault, &self.vault_file(), prepared)?;
+        vault::copy_vault_over_backup(vault, &self.vault_file())?;
         drop(guard);
         self.reset_throttle();
         Ok(())
@@ -511,7 +575,7 @@ impl AppState {
         if let Some(seconds_remaining) = self.check_throttle(now) {
             return Err(VaultError::Throttled { seconds_remaining });
         }
-        match vault::restore_replacing(&self.vault_path, password) {
+        match vault::restore_replacing(&self.vault_file(), password) {
             Ok(vault) => {
                 *self.guard() = Some(vault);
                 self.reset_throttle();
@@ -528,7 +592,7 @@ impl AppState {
 
     /// Copies the encrypted vault file to `dest`, refusing to overwrite. Requires unlock.
     pub fn export_vault(&self, dest: &Path) -> Result<()> {
-        self.with_vault(|_, _| vault::export_encrypted(&self.vault_path, dest))
+        self.with_vault(|_, _| vault::export_encrypted(&self.vault_file(), dest))
     }
 
     /// Writes a generated password to the concealed clipboard. The vault may be locked.
@@ -757,6 +821,8 @@ impl AppState {
                 last_used_at: None,
                 password_history: Vec::new(),
                 deleted_at: None,
+                totp_secret: None,
+                allow_http: false,
             };
             let summary = EntrySummary::from(&entry);
             data.entries.push(entry);
@@ -805,6 +871,8 @@ impl AppState {
                         last_used_at: None,
                         password_history: Vec::new(),
                         deleted_at: None,
+                        totp_secret: None,
+                        allow_http: false,
                     });
                 }
                 Ok(())
@@ -812,6 +880,194 @@ impl AppState {
             self.invalidate_health();
         }
         Ok(ImportCounts { added, skipped })
+    }
+
+    /// Creates a recovery code, seals it, and saves. The words are returned once.
+    pub fn create_recovery_code(&self) -> Result<RecoveryCode> {
+        self.ensure_unlocked()?;
+        let code = crate::generator::recovery_code()?;
+        let secret = SecretString::from(code.as_str());
+        self.with_vault(|vault, path| {
+            vault.enable_recovery(&secret, crate::crypto::KdfParams::default())?;
+            vault::save(vault, path)?;
+            Ok(())
+        })?;
+        Ok(RecoveryCode(code))
+    }
+
+    /// Same throttle as a password unlock. A wrong code counts as a wrong password.
+    pub fn unlock_with_recovery(&self, code: &SecretString) -> Result<()> {
+        let _slot = self.enter_single_flight()?;
+        let now = self.clock.now();
+        if let Some(seconds_remaining) = self.check_throttle(now) {
+            return Err(VaultError::Throttled { seconds_remaining });
+        }
+        match vault::load_with_recovery(&self.vault_file(), code) {
+            Ok(vault) => {
+                *self.guard() = Some(vault);
+                self.reset_throttle();
+                let _ = self.purge_deleted();
+                Ok(())
+            }
+            Err(err) => {
+                if err == VaultError::DecryptFailed {
+                    self.record_wrong_password(now);
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Moves the vault into `dest_dir`. The folder is chosen in Rust, not by the page.
+    pub fn move_vault_to(&self, dest_dir: &Path) -> Result<VaultInfo> {
+        self.ensure_unlocked()?;
+        let dest = vault::move_vault_files(&self.data_dir, &self.vault_file(), dest_dir)?;
+        *self.vault_path.lock().unwrap() = dest;
+        self.vault_info()
+    }
+
+    pub fn set_totp(&self, id: &str, secret: &str) -> Result<()> {
+        self.ensure_unlocked()?;
+        let cleaned: String = secret.chars().filter(|ch| !ch.is_whitespace()).collect();
+        if cleaned.is_empty() || cleaned.len() > 128 {
+            return Err(VaultError::FieldTooLong {
+                field: "one-time code",
+                max_chars: 128,
+            });
+        }
+        if crate::totp::current_code(&cleaned, 0).is_err() {
+            return Err(VaultError::InvalidGeneratorOptions(
+                "That one-time code secret is not valid.",
+            ));
+        }
+        self.modify(|data| {
+            let entry = find_active_mut(data, id)?;
+            entry.totp_secret = Some(cleaned);
+            Ok(())
+        })
+    }
+
+    pub fn clear_totp(&self, id: &str) -> Result<()> {
+        self.modify(|data| {
+            let entry = find_active_mut(data, id)?;
+            entry.totp_secret = None;
+            Ok(())
+        })
+    }
+
+    pub fn totp_code(&self, id: &str) -> Result<crate::totp::TotpCode> {
+        self.with_vault(|vault, _| {
+            let entry = find_active(&vault.data, id)?;
+            let secret = entry
+                .totp_secret
+                .as_deref()
+                .ok_or(VaultError::EntryNotFound)?;
+            let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp()).unwrap_or(0);
+            crate::totp::current_code(secret, now)
+        })
+    }
+
+    pub fn begin_pairing(&self) -> Result<crate::host::PairingCode> {
+        crate::host::begin_pairing(self)
+    }
+
+    pub fn list_pairings(&self) -> Result<Vec<crate::host::PairingInfo>> {
+        crate::host::list_pairings(self)
+    }
+
+    pub fn revoke_pairing(&self, id: &str) -> Result<()> {
+        crate::host::revoke_pairing(self, id)
+    }
+
+    pub fn pending_save(&self) -> Result<Option<crate::host::PendingSaveInfo>> {
+        crate::host::pending_save(self)
+    }
+
+    pub fn confirm_pending_save(&self) -> Result<()> {
+        crate::host::confirm_pending_save(self)
+    }
+
+    pub fn dismiss_pending_save(&self) -> Result<()> {
+        crate::host::dismiss_pending_save(self)
+    }
+
+    pub fn set_allow_http(&self, id: &str, allow: bool) -> Result<()> {
+        self.modify(|data| {
+            find_active_mut(data, id)?.allow_http = allow;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn add_login_from_host(
+        &self,
+        url: String,
+        username: String,
+        password: String,
+    ) -> Result<()> {
+        let title = crate::domain::display_host(&url).ok_or(VaultError::HostRejected)?;
+        self.add_entry(EntryInput {
+            title,
+            username,
+            password,
+            url,
+            notes: String::new(),
+        })?;
+        Ok(())
+    }
+
+    pub(crate) fn host_matches(&self, url: &str) -> Result<Vec<HostMatch>> {
+        let https = crate::domain::is_https(url);
+        self.with_vault(|vault, _| {
+            let mut matches = Vec::new();
+            for entry in vault
+                .data
+                .entries
+                .iter()
+                .filter(|entry| entry.deleted_at.is_none())
+            {
+                if !crate::domain::same_site(url, &entry.url) {
+                    continue;
+                }
+                if !https && !entry.allow_http {
+                    continue;
+                }
+                matches.push(HostMatch {
+                    id: entry.id.clone(),
+                    title: entry.title.clone(),
+                    username: entry.username.clone(),
+                });
+            }
+            Ok(matches)
+        })
+    }
+
+    pub(crate) fn host_login(&self, id: &str, url: &str) -> Result<HostSecret> {
+        self.with_vault(|vault, _| {
+            let entry = find_active(&vault.data, id)?;
+            if !crate::domain::same_site(url, &entry.url)
+                || (!crate::domain::is_https(url) && !entry.allow_http)
+            {
+                return Err(VaultError::HostRejected);
+            }
+            Ok(HostSecret {
+                username: entry.username.clone(),
+                password: Zeroizing::new(entry.password.clone()),
+            })
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fast_testing_vault(dir: &Path) -> Self {
+        let vault_path = dir.join(vault::VAULT_FILE_NAME);
+        let vault = vault::create_with_params(
+            &vault_path,
+            &SecretString::from("correct horse battery staple"),
+            crate::crypto::KdfParams::fast(),
+        )
+        .expect("test vault");
+        let state = Self::new(vault_path);
+        *state.guard() = Some(vault);
+        state
     }
 
     /// `input.password`: `None` keeps the entry's existing password; `Some(new)` replaces
@@ -906,6 +1162,8 @@ impl AppState {
                 backup: vault.backup_status(path),
                 kdf: vault.header().kdf.alg.clone(),
                 cipher: vault.header().cipher.alg.clone(),
+                has_recovery: vault.has_recovery(),
+                via_recovery: vault.via_recovery(),
             })
         })
     }
@@ -1006,7 +1264,7 @@ impl AppState {
     ) -> Result<T> {
         let mut guard = self.guard();
         let vault = guard.as_mut().ok_or(VaultError::Locked)?;
-        operation(vault, &self.vault_path)
+        operation(vault, &self.vault_file())
     }
 
     /// Applies a change and saves it. If either step fails, the in-memory data is restored
@@ -1173,7 +1431,13 @@ mod tests {
             crate::crypto::KdfParams::fast(),
         )
         .unwrap();
-        let state = AppState::assemble(dir.vault_path(), clock, clipboard, Duration::ZERO);
+        let state = AppState::assemble(
+            dir.0.clone(),
+            dir.vault_path(),
+            clock,
+            clipboard,
+            Duration::ZERO,
+        );
         *state.guard() = Some(vault);
         state
     }
@@ -1249,6 +1513,24 @@ mod tests {
             ("ensure_unlocked", state.ensure_unlocked()),
             ("vault_health", state.vault_health().map(drop)),
             ("import_csv", state.import_csv(b"").map(drop)),
+            (
+                "create_recovery_code",
+                state.create_recovery_code().map(drop),
+            ),
+            (
+                "move_vault_to",
+                state.move_vault_to(Path::new(".")).map(drop),
+            ),
+            ("set_totp", state.set_totp("any-id", "AAAA").map(drop)),
+            ("clear_totp", state.clear_totp("any-id")),
+            ("totp_code", state.totp_code("any-id").map(drop)),
+            ("begin_pairing", state.begin_pairing().map(drop)),
+            ("list_pairings", state.list_pairings().map(drop)),
+            ("revoke_pairing", state.revoke_pairing("any-id")),
+            ("pending_save", state.pending_save().map(drop)),
+            ("confirm_pending_save", state.confirm_pending_save()),
+            ("dismiss_pending_save", state.dismiss_pending_save()),
+            ("set_allow_http", state.set_allow_http("any-id", false)),
         ]
     }
 
