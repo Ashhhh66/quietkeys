@@ -284,6 +284,27 @@ html[data-density="compact"] .gap-3 {
   gap: 0.6rem;
 }
 
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .emergency-kit,
+  .emergency-kit * {
+    visibility: visible;
+  }
+  .emergency-kit {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: white;
+    color: black;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

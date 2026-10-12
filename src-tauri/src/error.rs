@@ -46,6 +46,8 @@ pub enum VaultError {
     WebsiteNotOpened,
     /// The OS could not reveal the vault file. The message never includes the path.
     VaultNotShown,
+    /// A CSV import was refused. The message never includes file contents.
+    ImportRefused,
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -71,6 +73,7 @@ impl VaultError {
             VaultError::Unsupported => "unsupported",
             VaultError::WebsiteNotOpened => "website_not_opened",
             VaultError::VaultNotShown => "vault_not_shown",
+            VaultError::ImportRefused => "import_refused",
             VaultError::Crypto => "crypto",
             VaultError::Io(_) => "io",
         }
@@ -116,6 +119,7 @@ impl fmt::Display for VaultError {
             }
             VaultError::WebsiteNotOpened => write!(f, "That address can't be opened."),
             VaultError::VaultNotShown => write!(f, "The vault couldn't be shown in its folder."),
+            VaultError::ImportRefused => write!(f, "That file can't be imported."),
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),
         }

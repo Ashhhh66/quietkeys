@@ -13,6 +13,7 @@ import {
   changeMasterPassword,
   exportVault,
   friendlyMessage,
+  importLogins,
   isApiError,
   openEncryptionReadme,
   showVaultInFolder,
@@ -28,6 +29,7 @@ import {
 } from "../autoLock";
 import PasswordChecklist, { passwordChecklistPasses } from "../components/PasswordChecklist";
 import StrengthMeter from "../components/StrengthMeter";
+import EmergencyKit from "../components/EmergencyKit";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import ThemeSwitch from "../components/ThemeSwitch";
 import { agoLabel } from "../relativeTime";
@@ -53,6 +55,10 @@ export default function Settings() {
   const [info, setInfo] = useState<VaultInfo | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
   const [showError, setShowError] = useState<string | null>(null);
+  const [kitOpen, setKitOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const canChange = passwordChecklistPasses(next, confirm) && current.length > 0 && !submitting;
 
@@ -114,6 +120,20 @@ export default function Settings() {
     }
   }
 
+  async function handleImport() {
+    setImporting(true);
+    setImportError(null);
+    setImportMessage(null);
+    try {
+      const result = await importLogins();
+      if (!result.cancelled) setImportMessage(importSummary(result.added, result.skipped));
+    } catch (err) {
+      setImportError(friendlyMessage(err));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function showInFolder() {
     setShowError(null);
     try {
@@ -135,6 +155,11 @@ export default function Settings() {
   return (
     <div className="flex flex-col gap-6 px-10 py-8">
       <h2 className="text-[28px] font-semibold tracking-[-0.02em]">Settings</h2>
+      {kitOpen && info && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-6">
+          <EmergencyKit path={info.path} onClose={() => setKitOpen(false)} />
+        </div>
+      )}
 
       <section className="flex max-w-[860px] flex-col gap-4 rounded-[20px] border border-ok-fg bg-ok-bg px-6 py-5">
         <div className="flex items-start gap-3">
@@ -178,6 +203,20 @@ export default function Settings() {
               >
                 {exporting ? "Exporting…" : "Export a copy"}
               </button>
+              <button
+                type="button"
+                onClick={() => void handleImport()}
+                disabled={importing}
+                className="mt-2 ml-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
+              >
+                {importing ? "Importing…" : "Import a CSV"}
+              </button>
+              {importMessage && <p className="mt-2 text-[13.5px] text-text">{importMessage}</p>}
+              {importError && (
+                <p role="alert" className="mt-2 text-[13.5px] text-error-fg">
+                  {importError}
+                </p>
+              )}
               {exportError && (
                 <p role="alert" className="mt-2 text-[13.5px] text-error-fg">
                   {exportError}
@@ -192,6 +231,14 @@ export default function Settings() {
                 className="mt-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-accent-text hover:bg-nav-active-bg"
               >
                 How it works
+              </button>
+              <button
+                type="button"
+                onClick={() => setKitOpen(true)}
+                disabled={!info}
+                className="mt-2 ml-2 h-8 rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg disabled:text-disabled-fg"
+              >
+                Emergency Kit
               </button>
             </InfoCell>
           </div>
@@ -376,6 +423,14 @@ function algorithmLabel(kdf: string, cipher: string): string {
   const kdfName = kdf === "argon2id" ? "Argon2id" : kdf;
   const cipherName = cipher === "xchacha20poly1305" ? "XChaCha20-Poly1305" : cipher;
   return `${kdfName} · ${cipherName}`;
+}
+
+function importSummary(added: number, skipped: number): string {
+  const addedLabel = added === 1 ? "Added 1 login." : `Added ${added} logins.`;
+  if (added === 0 && skipped === 0) return "No logins were found in that file.";
+  if (skipped === 0) return addedLabel;
+  const skippedLabel = skipped === 1 ? "1 row was skipped." : `${skipped} rows were skipped.`;
+  return `${addedLabel} ${skippedLabel}`;
 }
 
 function InfoCell({ title, children }: { title: string; children: ReactNode }) {

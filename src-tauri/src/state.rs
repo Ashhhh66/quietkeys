@@ -100,6 +100,14 @@ fn check_field_length(field: &'static str, value: &str, max_chars: usize) -> Res
     }
 }
 
+/// How many CSV rows became logins. No titles, usernames, or passwords.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportCounts {
+    pub added: u32,
+    pub skipped: u32,
+}
+
 /// What Settings may show about the vault file. No key material and no entry contents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -758,6 +766,54 @@ impl AppState {
         Ok(summary)
     }
 
+    /// Adds logins from a CSV the user picked. One save for the whole file.
+    /// The result is only counts: nothing from the file is returned.
+    pub fn import_csv(&self, bytes: &[u8]) -> Result<ImportCounts> {
+        self.ensure_unlocked()?;
+        let parsed = crate::import::parse_csv(bytes)?;
+        let mut skipped = parsed.skipped;
+        let mut accepted = Vec::new();
+        for mut login in parsed.logins {
+            let input = EntryInput {
+                title: mem::take(&mut login.title),
+                username: mem::take(&mut login.username),
+                password: mem::take(&mut login.password),
+                url: mem::take(&mut login.url),
+                notes: mem::take(&mut login.notes),
+            };
+            if input.check_lengths().is_err() {
+                skipped += 1;
+                continue;
+            }
+            accepted.push(input);
+        }
+        let added = u32::try_from(accepted.len()).map_err(|_| VaultError::ImportRefused)?;
+        if added > 0 {
+            self.modify(|data| {
+                let now = now_rfc3339()?;
+                for mut input in accepted {
+                    data.entries.push(Entry {
+                        id: Uuid::new_v4().to_string(),
+                        title: mem::take(&mut input.title),
+                        username: mem::take(&mut input.username),
+                        password: mem::take(&mut input.password),
+                        url: mem::take(&mut input.url),
+                        notes: mem::take(&mut input.notes),
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                        favourite: false,
+                        last_used_at: None,
+                        password_history: Vec::new(),
+                        deleted_at: None,
+                    });
+                }
+                Ok(())
+            })?;
+            self.invalidate_health();
+        }
+        Ok(ImportCounts { added, skipped })
+    }
+
     /// `input.password`: `None` keeps the entry's existing password; `Some(new)` replaces
     /// it. Every other field is always replaced.
     pub fn update_entry(&self, id: &str, mut input: UpdateEntryInput) -> Result<EntrySummary> {
@@ -1192,6 +1248,7 @@ mod tests {
             ),
             ("ensure_unlocked", state.ensure_unlocked()),
             ("vault_health", state.vault_health().map(drop)),
+            ("import_csv", state.import_csv(b"").map(drop)),
         ]
     }
 
@@ -2511,5 +2568,51 @@ mod tests {
         // The state still works normally afterwards.
         state.unlock(&password()).unwrap();
         assert_eq!(state.list_entries().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn import_csv_adds_logins_and_returns_only_counts() {
+        let dir = TestDir::new();
+        let state = fast_unlocked(&dir);
+        let mut csv = "title,username,password,url,notes\n".to_string();
+        csv.push_str(&"a".repeat(MAX_TITLE_CHARS + 1));
+        csv.push_str(",user,csv-secret-value,https://example.test,n\n");
+        csv.push_str("Ok,ada,other-secret,https://ok.example,kept\n");
+        let counts = state.import_csv(csv.as_bytes()).unwrap();
+        assert_eq!(counts.added, 1);
+        assert_eq!(counts.skipped, 1);
+        let json = serde_json::to_string(&counts).unwrap();
+        assert!(!json.contains("secret"));
+        assert!(!json.contains("Ok"));
+        let entries = state.list_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Ok");
+        assert_eq!(
+            state.get_password(&entries[0].id).unwrap().expose(),
+            "other-secret"
+        );
+    }
+
+    #[test]
+    fn import_csv_refuses_a_locked_vault_and_a_file_without_the_columns() {
+        let dir = TestDir::new();
+        let state = AppState::new(dir.vault_path());
+        assert_eq!(
+            state
+                .import_csv(b"title,username,password,url,notes\n")
+                .unwrap_err(),
+            VaultError::Locked
+        );
+        let state = fast_unlocked(&dir);
+        let err = state
+            .import_csv(
+                b"title,username,secret-header,url,notes\nA,b,csv-secret-value,https://e.test,n\n",
+            )
+            .unwrap_err();
+        assert_eq!(err, VaultError::ImportRefused);
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(!json.contains("csv-secret-value"));
+        assert!(!json.contains("secret-header"));
+        assert!(state.list_entries().unwrap().is_empty());
     }
 }

@@ -31,6 +31,7 @@ const COMMANDS: &[&str] = &[
     "delete_forever",
     "list_deleted_entries",
     "copy_history_password",
+    "import_logins",
 ];
 
 fn main() {

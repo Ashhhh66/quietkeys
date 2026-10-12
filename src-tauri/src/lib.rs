@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod error;
 pub mod generator;
 pub mod health;
+pub mod import;
 pub mod state;
 pub mod vault;
 pub mod website;
@@ -63,6 +64,7 @@ pub fn run() {
             commands::delete_forever,
             commands::list_deleted_entries,
             commands::copy_history_password,
+            commands::import_logins,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

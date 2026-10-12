@@ -18,6 +18,7 @@ export type ApiErrorKind =
   | "already_unlocked"
   | "unsupported"
   | "website_not_opened"
+  | "import_refused"
   | "invalid_generator_options"
   | "crypto"
   | "io";
@@ -52,6 +53,8 @@ export function friendlyMessage(err: unknown): string {
         return "A file with that name already exists. Choose a different name.";
       }
       return err.message;
+    case "import_refused":
+      return "That file can't be imported.";
     default:
       return err.message;
   }
@@ -209,6 +212,16 @@ export const restoreFromBackup = (masterPassword: string): Promise<void> =>
 
 /** The save dialog runs in Rust. Cancel is a success and writes nothing. */
 export const exportVault = (): Promise<void> => call("export_vault");
+
+/** Counts from a CSV import. The file dialog runs in Rust. No row contents. */
+export interface ImportResult {
+  added: number;
+  skipped: number;
+  cancelled: boolean;
+}
+
+/** The open dialog runs in Rust. The UI sends no path. Cancel writes nothing. */
+export const importLogins = (): Promise<ImportResult> => call("import_logins");
 
 /** Clears the clipboard only when it still holds the last quietkeys copy. */
 export const clearClipboard = (): Promise<void> => call("clear_clipboard");

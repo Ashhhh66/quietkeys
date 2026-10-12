@@ -37,7 +37,9 @@
     "allow-delete-forever",
     "allow-list-deleted-entries",
     "allow-copy-history-password",
+    "allow-import-logins",
     "dialog:allow-save",
+    "dialog:allow-open",
     "core:app:default"
   ]
 }
