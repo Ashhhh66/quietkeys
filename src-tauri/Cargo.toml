@@ -15,6 +15,10 @@ edition = "2021"
 name = "quietkeys_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "quietkeys-native-host"
+path = "src/native_host_main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -39,10 +43,11 @@ url = "2.5.8"
 tauri-plugin-opener = "2"
 hmac = "0.12"
 sha1 = "0.10"
+sha2 = "0.10.9"
+psl = "2.1.171"
+interprocess = "2.2.3"
 
 [dev-dependencies]
-# Already in Cargo.lock via other crates. Used only to check the bundled wordlist.
-sha2 = "0.10.9"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
@@ -50,6 +55,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
 ] }
+widestring = "1.2.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"

@@ -173,6 +173,9 @@ pub struct Entry {
     /// One-time-code secret. Never sent to the screen. Missing on older vaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub totp_secret: Option<String>,
+    /// The user allowed this login to be filled on an http page. Missing means no.
+    #[serde(default)]
+    pub allow_http: bool,
 }
 
 impl fmt::Debug for Entry {
@@ -1144,6 +1147,7 @@ mod tests {
             password_history: Vec::new(),
             deleted_at: None,
             totp_secret: None,
+            allow_http: false,
         }
     }
 

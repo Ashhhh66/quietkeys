@@ -22,6 +22,7 @@ Build a desktop password manager that stores credentials in a single encrypted v
 | Key derivation | `argon2` crate (Argon2id) |
 | Encryption | `chacha20poly1305` crate (XChaCha20-Poly1305) |
 | One-time codes | `hmac` 0.12 and `sha1` 0.10 (RFC 6238 HMAC-SHA1). Not a homemade hash. |
+| Pairing token hash | `sha2` 0.10 (SHA-256). The token itself is not stored. |
 | Secret handling | `zeroize` and `secrecy` crates |
 | Randomness | `rand` with `OsRng` / `getrandom` only |
 | Strength meter | `zxcvbn` crate |
@@ -230,11 +231,11 @@ Vault health shipped in 1.1.
 - TOTP. HMAC-SHA1, 30 seconds, 6 digits. The secret stays in the vault. List and get-entry return only whether a code is set. The current code is fetched when the login is open.
 
 ### Phase 8 — Native host and pairing (no browser UI yet)
-- Build the `native-host` binary and the IPC listener inside the desktop app.
-- Implement pairing, token hashing, revocation, and the message schema from section 5b.
-- Write installer steps that register the native messaging host manifest for Chrome on Windows (registry key) and macOS (manifest file).
+- `quietkeys-native-host` speaks Chrome's length-prefixed stdin/stdout and forwards each message to the desktop app over a user-only local socket. It holds no secrets. Installer steps are in `docs/NATIVE_HOST.md`.
+- Pairing shows a 6-digit code in Settings. The browser sends that code once. The app returns a 32-byte token and stores only its SHA-256. Settings can revoke a browser. A wrong code is rejected, and five failures clear the code.
+- Messages are `status`, `find_logins`, `get_login`, and `save_login`, with a 64 KiB limit. `find_logins` returns titles and usernames only. `get_login` returns a password only when the registrable domain still matches. `http://` is refused unless that login was explicitly allowed. `save_login` waits for confirmation in the app and does not save on its own.
 - **Tests required:** malformed/oversized messages rejected; unpaired or revoked tokens rejected; every request fails while the vault is locked; domain matching tests covering subdomains, lookalike domains, IP addresses, `http://` and public suffixes like `co.uk`.
-- **Done when:** a test script can pair, call `find_logins`, and get correct results through the native host.
+- **Done when:** a test can pair, call `find_logins`, and get the matching title and username, with no password, through the native-host framing.
 
 ### Phase 9 — Browser extension
 - Manifest V3 extension in TypeScript: popup showing status and matching logins, a small icon in login fields, fill on click, pairing screen.

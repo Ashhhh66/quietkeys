@@ -10,16 +10,24 @@ import {
   type TextSize,
 } from "../appearance";
 import {
+  beginPairing,
   changeMasterPassword,
+  confirmPendingSave,
   createRecoveryCode,
+  dismissPendingSave,
   exportVault,
   friendlyMessage,
   importLogins,
   isApiError,
+  listPairings,
   moveVault,
   openEncryptionReadme,
+  pendingSave,
+  revokePairing,
   showVaultInFolder,
   vaultInfo,
+  type PairingInfo,
+  type PendingSaveInfo,
   type BackupStatus,
   type VaultInfo,
 } from "../api";
@@ -66,6 +74,9 @@ export default function Settings() {
   const [creatingRecovery, setCreatingRecovery] = useState(false);
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [pairings, setPairings] = useState<PairingInfo[]>([]);
+  const [stagedSave, setStagedSave] = useState<PendingSaveInfo | null>(null);
 
   const canChange =
     passwordChecklistPasses(next, confirm) &&
@@ -87,6 +98,20 @@ export default function Settings() {
       })
       .catch((err: unknown) => {
         if (!cancelled) setInfoError(friendlyMessage(err));
+      });
+    listPairings()
+      .then((value) => {
+        if (!cancelled) setPairings(value);
+      })
+      .catch(() => {
+        if (!cancelled) setPairings([]);
+      });
+    pendingSave()
+      .then((value) => {
+        if (!cancelled) setStagedSave(value);
+      })
+      .catch(() => {
+        if (!cancelled) setStagedSave(null);
       });
     return () => {
       cancelled = true;
@@ -467,6 +492,74 @@ export default function Settings() {
           </fieldset>
         </section>
       </div>
+
+      <section className="flex max-w-[860px] flex-col gap-3 rounded-[16px] border border-panel-border bg-inset px-[18px] py-4">
+        <h3 className="text-[16px] font-semibold">Browser</h3>
+        <p className="text-[14px] text-text-soft">
+          Pair a browser, then type this code there. quietkeys stores only a hash of the pairing.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            void beginPairing()
+              .then(setPairingCode)
+              .catch((err: unknown) => setShowError(friendlyMessage(err)));
+          }}
+          className="h-8 w-fit rounded-[10px] border border-panel-border bg-panel px-3 text-[13px] font-medium text-text hover:bg-nav-active-bg"
+        >
+          Pair a browser
+        </button>
+        {pairingCode && (
+          <p className="font-mono text-[22px] tracking-[0.18em]" aria-label="Pairing code">
+            {pairingCode}
+          </p>
+        )}
+        <ul className="flex flex-col gap-2">
+          {pairings.map((pairing) => (
+            <li key={pairing.id} className="flex items-center justify-between gap-3 text-[14px]">
+              <span>{pairing.label}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  void revokePairing(pairing.id).then(() =>
+                    setPairings((current) => current.filter((item) => item.id !== pairing.id)),
+                  );
+                }}
+                className="text-[13px] font-medium text-accent-text"
+              >
+                Revoke {pairing.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {stagedSave && (
+          <div className="rounded-[12px] border border-panel-border bg-panel px-3 py-3">
+            <p className="text-[14px] text-text">
+              Save a login for {stagedSave.host} as {stagedSave.username}?
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void confirmPendingSave().then(() => setStagedSave(null));
+                }}
+                className="h-8 rounded-[10px] bg-accent-gradient px-3 text-[13px] font-semibold text-on-accent"
+              >
+                Save login
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void dismissPendingSave().then(() => setStagedSave(null));
+                }}
+                className="h-8 rounded-[10px] border border-panel-border px-3 text-[13px] font-medium"
+              >
+                Don't save
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
 
       <footer className="flex max-w-[860px] items-center justify-between gap-4">
         <p className="text-[13px] text-muted">

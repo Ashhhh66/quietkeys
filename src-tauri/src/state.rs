@@ -176,6 +176,8 @@ pub struct EntryDetails {
     pub history: Vec<HistoryMeta>,
     /// A one-time code is set. The secret itself is not included.
     pub totp: bool,
+    /// The user allowed filling this login on an http page.
+    pub allow_http: bool,
 }
 
 impl From<&Entry> for EntryDetails {
@@ -197,8 +199,20 @@ impl From<&Entry> for EntryDetails {
                 })
                 .collect(),
             totp: entry.totp_secret.is_some(),
+            allow_http: entry.allow_http,
         }
     }
+}
+
+pub(crate) struct HostMatch {
+    pub id: String,
+    pub title: String,
+    pub username: String,
+}
+
+pub(crate) struct HostSecret {
+    pub username: String,
+    pub password: Zeroizing<String>,
 }
 
 /// Shown once. Not stored, and not written to logs.
@@ -266,6 +280,8 @@ pub struct AppState {
     /// The app data directory. The location pointer lives here even after the vault moves.
     data_dir: PathBuf,
     vault_path: Mutex<PathBuf>,
+    pub(crate) pending_pair: Mutex<Option<crate::host::PendingPair>>,
+    pub(crate) pending_save: Mutex<Option<crate::host::PendingSave>>,
     unlocked: Mutex<Option<UnlockedVault>>,
     throttle: Mutex<ThrottleState>,
     /// Held for the whole body of `create_vault`, `unlock`, `change_master_password`, and
@@ -334,6 +350,8 @@ impl AppState {
         Self {
             data_dir,
             vault_path: Mutex::new(vault_path),
+            pending_pair: Mutex::new(None),
+            pending_save: Mutex::new(None),
             unlocked: Mutex::new(None),
             throttle: Mutex::new(ThrottleState::default()),
             single_flight: Mutex::new(()),
@@ -381,6 +399,10 @@ impl AppState {
                 Ok(poisoned.into_inner())
             }
         }
+    }
+
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.data_dir
     }
 
     fn vault_file(&self) -> PathBuf {
@@ -486,6 +508,7 @@ impl AppState {
         self.clear_copied();
         *self.guard() = None;
         self.clear_health_cache();
+        crate::host::clear_pending(self);
     }
 
     /// Verifies `current` by decrypting the vault file with it, then re-encrypts under
@@ -799,6 +822,7 @@ impl AppState {
                 password_history: Vec::new(),
                 deleted_at: None,
                 totp_secret: None,
+                allow_http: false,
             };
             let summary = EntrySummary::from(&entry);
             data.entries.push(entry);
@@ -848,6 +872,7 @@ impl AppState {
                         password_history: Vec::new(),
                         deleted_at: None,
                         totp_secret: None,
+                        allow_http: false,
                     });
                 }
                 Ok(())
@@ -940,6 +965,109 @@ impl AppState {
             let now = u64::try_from(OffsetDateTime::now_utc().unix_timestamp()).unwrap_or(0);
             crate::totp::current_code(secret, now)
         })
+    }
+
+    pub fn begin_pairing(&self) -> Result<crate::host::PairingCode> {
+        crate::host::begin_pairing(self)
+    }
+
+    pub fn list_pairings(&self) -> Result<Vec<crate::host::PairingInfo>> {
+        crate::host::list_pairings(self)
+    }
+
+    pub fn revoke_pairing(&self, id: &str) -> Result<()> {
+        crate::host::revoke_pairing(self, id)
+    }
+
+    pub fn pending_save(&self) -> Result<Option<crate::host::PendingSaveInfo>> {
+        crate::host::pending_save(self)
+    }
+
+    pub fn confirm_pending_save(&self) -> Result<()> {
+        crate::host::confirm_pending_save(self)
+    }
+
+    pub fn dismiss_pending_save(&self) -> Result<()> {
+        crate::host::dismiss_pending_save(self)
+    }
+
+    pub fn set_allow_http(&self, id: &str, allow: bool) -> Result<()> {
+        self.modify(|data| {
+            find_active_mut(data, id)?.allow_http = allow;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn add_login_from_host(
+        &self,
+        url: String,
+        username: String,
+        password: String,
+    ) -> Result<()> {
+        let title = crate::domain::display_host(&url).ok_or(VaultError::HostRejected)?;
+        self.add_entry(EntryInput {
+            title,
+            username,
+            password,
+            url,
+            notes: String::new(),
+        })?;
+        Ok(())
+    }
+
+    pub(crate) fn host_matches(&self, url: &str) -> Result<Vec<HostMatch>> {
+        let https = crate::domain::is_https(url);
+        self.with_vault(|vault, _| {
+            let mut matches = Vec::new();
+            for entry in vault
+                .data
+                .entries
+                .iter()
+                .filter(|entry| entry.deleted_at.is_none())
+            {
+                if !crate::domain::same_site(url, &entry.url) {
+                    continue;
+                }
+                if !https && !entry.allow_http {
+                    continue;
+                }
+                matches.push(HostMatch {
+                    id: entry.id.clone(),
+                    title: entry.title.clone(),
+                    username: entry.username.clone(),
+                });
+            }
+            Ok(matches)
+        })
+    }
+
+    pub(crate) fn host_login(&self, id: &str, url: &str) -> Result<HostSecret> {
+        self.with_vault(|vault, _| {
+            let entry = find_active(&vault.data, id)?;
+            if !crate::domain::same_site(url, &entry.url)
+                || (!crate::domain::is_https(url) && !entry.allow_http)
+            {
+                return Err(VaultError::HostRejected);
+            }
+            Ok(HostSecret {
+                username: entry.username.clone(),
+                password: Zeroizing::new(entry.password.clone()),
+            })
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fast_testing_vault(dir: &Path) -> Self {
+        let vault_path = dir.join(vault::VAULT_FILE_NAME);
+        let vault = vault::create_with_params(
+            &vault_path,
+            &SecretString::from("correct horse battery staple"),
+            crate::crypto::KdfParams::fast(),
+        )
+        .expect("test vault");
+        let state = Self::new(vault_path);
+        *state.guard() = Some(vault);
+        state
     }
 
     /// `input.password`: `None` keeps the entry's existing password; `Some(new)` replaces
@@ -1396,6 +1524,13 @@ mod tests {
             ("set_totp", state.set_totp("any-id", "AAAA").map(drop)),
             ("clear_totp", state.clear_totp("any-id")),
             ("totp_code", state.totp_code("any-id").map(drop)),
+            ("begin_pairing", state.begin_pairing().map(drop)),
+            ("list_pairings", state.list_pairings().map(drop)),
+            ("revoke_pairing", state.revoke_pairing("any-id")),
+            ("pending_save", state.pending_save().map(drop)),
+            ("confirm_pending_save", state.confirm_pending_save()),
+            ("dismiss_pending_save", state.dismiss_pending_save()),
+            ("set_allow_http", state.set_allow_http("any-id", false)),
         ]
     }
 

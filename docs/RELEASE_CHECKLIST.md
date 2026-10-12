@@ -100,6 +100,12 @@ Run these by hand on a built app before tagging a release.
 - Move the vault to an empty folder. A folder that already contains `vault.quietkeys` is refused.
 - A one-time code secret is not shown again after it is saved. The open login shows a 6-digit code.
 
+## Native host
+
+- Pair a browser from Settings and type the 6-digit code. Revoke removes it.
+- A locked vault does not return logins.
+- Saving a login from the browser waits until Settings confirms it.
+
 ## Upgrade from 1.0
 
 - Open a vault last saved by 1.0, then save any change.

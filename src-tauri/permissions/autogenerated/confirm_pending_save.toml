@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-pending-save"
+description = "Enables the confirm_pending_save command without any pre-configured scope."
+commands.allow = ["confirm_pending_save"]
+
+[[permission]]
+identifier = "deny-confirm-pending-save"
+description = "Denies the confirm_pending_save command without any pre-configured scope."
+commands.deny = ["confirm_pending_save"]

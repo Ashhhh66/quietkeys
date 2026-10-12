@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dismiss-pending-save"
+description = "Enables the dismiss_pending_save command without any pre-configured scope."
+commands.allow = ["dismiss_pending_save"]
+
+[[permission]]
+identifier = "deny-dismiss-pending-save"
+description = "Denies the dismiss_pending_save command without any pre-configured scope."
+commands.deny = ["dismiss_pending_save"]

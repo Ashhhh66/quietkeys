@@ -20,6 +20,7 @@ export type ApiErrorKind =
   | "website_not_opened"
   | "import_refused"
   | "location_taken"
+  | "rejected"
   | "invalid_generator_options"
   | "crypto"
   | "io";
@@ -58,6 +59,8 @@ export function friendlyMessage(err: unknown): string {
       return "That file can't be imported.";
     case "location_taken":
       return "That folder already has a vault.";
+    case "rejected":
+      return "That request was rejected.";
     default:
       return err.message;
   }
@@ -124,6 +127,7 @@ export interface EntryDetails {
   history?: HistoryMeta[];
   /** A one-time code is set. The secret is not included. */
   totp?: boolean;
+  allowHttp?: boolean;
 }
 
 export interface EntryInput {
@@ -201,6 +205,32 @@ export interface TotpCode {
 }
 
 export const totpCode = (id: string): Promise<TotpCode> => call("totp_code", { id });
+
+export const beginPairing = (): Promise<string> => call("begin_pairing");
+
+export interface PairingInfo {
+  id: string;
+  label: string;
+  createdAt: string;
+}
+
+export const listPairings = (): Promise<PairingInfo[]> => call("list_pairings");
+
+export const revokePairing = (id: string): Promise<void> => call("revoke_pairing", { id });
+
+export interface PendingSaveInfo {
+  host: string;
+  username: string;
+}
+
+export const pendingSave = (): Promise<PendingSaveInfo | null> => call("pending_save");
+
+export const confirmPendingSave = (): Promise<void> => call("confirm_pending_save");
+
+export const dismissPendingSave = (): Promise<void> => call("dismiss_pending_save");
+
+export const setAllowHttp = (id: string, allow: boolean): Promise<void> =>
+  call("set_allow_http", { id, allow });
 
 export const lock = (): Promise<void> => call("lock");
 

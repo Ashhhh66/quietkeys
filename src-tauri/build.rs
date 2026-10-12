@@ -38,6 +38,13 @@ const COMMANDS: &[&str] = &[
     "set_totp",
     "clear_totp",
     "totp_code",
+    "begin_pairing",
+    "list_pairings",
+    "revoke_pairing",
+    "pending_save",
+    "confirm_pending_save",
+    "dismiss_pending_save",
+    "set_allow_http",
 ];
 
 fn main() {

@@ -50,6 +50,8 @@ pub enum VaultError {
     ImportRefused,
     /// The chosen folder already contains a vault. Its contents are not read.
     LocationTaken,
+    /// A browser-host request was refused. The message never includes the request.
+    HostRejected,
     /// The OS random number generator or a cipher primitive failed.
     Crypto,
     Io(io::ErrorKind),
@@ -77,6 +79,7 @@ impl VaultError {
             VaultError::VaultNotShown => "vault_not_shown",
             VaultError::ImportRefused => "import_refused",
             VaultError::LocationTaken => "location_taken",
+            VaultError::HostRejected => "rejected",
             VaultError::Crypto => "crypto",
             VaultError::Io(_) => "io",
         }
@@ -124,6 +127,7 @@ impl fmt::Display for VaultError {
             VaultError::VaultNotShown => write!(f, "The vault couldn't be shown in its folder."),
             VaultError::ImportRefused => write!(f, "That file can't be imported."),
             VaultError::LocationTaken => write!(f, "That folder already has a vault."),
+            VaultError::HostRejected => write!(f, "That request was rejected."),
             VaultError::Crypto => write!(f, "Internal cryptography error"),
             VaultError::Io(kind) => write!(f, "File error: {kind}"),
         }

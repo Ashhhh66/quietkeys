@@ -6,6 +6,7 @@ import {
   getEntry,
   getPassword,
   isApiError,
+  setAllowHttp,
   setTotp,
   updateEntry,
   type EntrySummary,
@@ -55,6 +56,7 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
   const [totpSecret, setTotpSecret] = useState("");
   const [totpEnabled, setTotpEnabled] = useState(false);
   const [removeTotp, setRemoveTotp] = useState(false);
+  const [allowHttp, setAllowHttpState] = useState(false);
   const [loading, setLoading] = useState(id !== null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +82,7 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
         setUrl(details.url);
         setNotes(details.notes);
         setTotpEnabled(details.totp === true);
+        setAllowHttpState(details.allowHttp === true);
       } catch (err) {
         if (!cancelled) setError(isApiError(err) ? err.message : "Could not load entry");
       } finally {
@@ -257,6 +260,22 @@ export default function EntryEditor({ id, onDone, onOpenGenerator, appliedPasswo
             >
               {removeTotp ? "Keep the one-time code" : "Remove the one-time code"}
             </button>
+          )}
+          {id !== null && (
+            <label className="mt-3 flex items-center gap-2 text-[13.5px] text-text">
+              <input
+                type="checkbox"
+                checked={allowHttp}
+                onChange={(event) => {
+                  const allow = event.target.checked;
+                  setAllowHttpState(allow);
+                  void setAllowHttp(id, allow).catch((err: unknown) =>
+                    setError(isApiError(err) ? err.message : "Could not update this login"),
+                  );
+                }}
+              />
+              Allow this login on http pages
+            </label>
           )}
         </div>
         {error && (

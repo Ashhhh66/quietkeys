@@ -119,6 +119,43 @@ pub fn totp_code(state: State<'_, AppState>, id: String) -> CommandResult<crate:
 }
 
 #[tauri::command]
+pub fn begin_pairing(state: State<'_, AppState>) -> CommandResult<crate::host::PairingCode> {
+    state.begin_pairing()
+}
+
+#[tauri::command]
+pub fn list_pairings(state: State<'_, AppState>) -> CommandResult<Vec<crate::host::PairingInfo>> {
+    state.list_pairings()
+}
+
+#[tauri::command]
+pub fn revoke_pairing(state: State<'_, AppState>, id: String) -> CommandResult<()> {
+    state.revoke_pairing(&id)
+}
+
+#[tauri::command]
+pub fn pending_save(
+    state: State<'_, AppState>,
+) -> CommandResult<Option<crate::host::PendingSaveInfo>> {
+    state.pending_save()
+}
+
+#[tauri::command]
+pub fn confirm_pending_save(state: State<'_, AppState>) -> CommandResult<()> {
+    state.confirm_pending_save()
+}
+
+#[tauri::command]
+pub fn dismiss_pending_save(state: State<'_, AppState>) -> CommandResult<()> {
+    state.dismiss_pending_save()
+}
+
+#[tauri::command]
+pub fn set_allow_http(state: State<'_, AppState>, id: String, allow: bool) -> CommandResult<()> {
+    state.set_allow_http(&id, allow)
+}
+
+#[tauri::command]
 pub async fn unlock(app: AppHandle, master_password: String) -> CommandResult<()> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
