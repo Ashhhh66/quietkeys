@@ -1,10 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { isUnlocked, onLocked, vaultExists } from "./api";
+import Onboarding from "./screens/Onboarding";
 import Setup from "./screens/Setup";
 import Unlock from "./screens/Unlock";
 import VaultList from "./screens/VaultList";
 
-type Screen = "loading" | "setup" | "unlock" | "vault";
+type Screen = "loading" | "setup" | "onboarding" | "unlock" | "vault";
 
 function Centered({ children }: { children: ReactNode }) {
   return (
@@ -44,7 +45,9 @@ function App() {
     case "loading":
       return <Centered>Loading…</Centered>;
     case "setup":
-      return <Setup onCreated={() => setScreen("vault")} />;
+      return <Setup onCreated={() => setScreen("onboarding")} />;
+    case "onboarding":
+      return <Onboarding onContinue={() => setScreen("vault")} />;
     case "unlock":
       return <Unlock onUnlocked={() => setScreen("vault")} />;
     case "vault":

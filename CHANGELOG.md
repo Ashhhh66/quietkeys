@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- After a new vault is created, quietkeys explains that the master password cannot be recovered and can print an Emergency Kit. The kit leaves the password blank.
+- Logins can be imported from a CSV. The file is chosen in the app, and the screen shows only how many were added.
+
 ### Fixed
 
 - On Linux, Settings shortens the home folder to `~/`, the same way macOS does, so the username stays off screen.

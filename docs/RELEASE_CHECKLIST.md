@@ -87,6 +87,12 @@ Run these by hand on a built app before tagging a release.
 - Generate a new password opens the editor with the generator. Open uses that login's stored website.
 - The details pills for that login match the Health screen.
 
+## Onboarding, Emergency Kit, and import
+
+- Creating a vault shows that the master password cannot be recovered, then the shortened vault path.
+- The Emergency Kit prints with a blank password line. The password is not on the page.
+- Import a CSV from Settings. The result is a count. Cancel adds nothing.
+
 ## Upgrade from 1.0
 
 - Open a vault last saved by 1.0, then save any change.

@@ -251,7 +251,7 @@ The full list, including optional and out-of-scope work, is in [ROADMAP.md](ROAD
 - [x] Phase 4: generator, clipboard, auto-lock, change master password, backups
 - [x] Phase 5: polish, installers and CI, ending with the v1 release
 - [x] 1.1: vault health
-- [ ] Phase 6: onboarding and Emergency Kit, import
+- [x] Phase 6: onboarding and Emergency Kit, import
 - [ ] Phase 7: recovery code with vault format v2, choosing the vault location with conflict detection, TOTP
 - [ ] Phase 8: native host and pairing
 - [ ] Phase 9: browser extension

@@ -15,6 +15,7 @@ vi.mock("../api", async () => {
     scorePassword: vi.fn(),
     changeMasterPassword: vi.fn(),
     exportVault: vi.fn(),
+    importLogins: vi.fn(),
     vaultInfo: vi.fn(),
     showVaultInFolder: vi.fn(),
     openEncryptionReadme: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../api", async () => {
 
 const scorePassword = api.scorePassword as unknown as ReturnType<typeof vi.fn>;
 const exportVault = api.exportVault as unknown as ReturnType<typeof vi.fn>;
+const importLogins = api.importLogins as unknown as ReturnType<typeof vi.fn>;
 const changeMasterPassword = api.changeMasterPassword as unknown as ReturnType<typeof vi.fn>;
 const vaultInfo = api.vaultInfo as unknown as ReturnType<typeof vi.fn>;
 const showVaultInFolder = api.showVaultInFolder as unknown as ReturnType<typeof vi.fn>;
@@ -45,6 +47,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ score: 2, warning: "Short", suggestions: ["Add words"] });
   exportVault.mockReset();
+  importLogins.mockReset();
   changeMasterPassword.mockReset();
   savedAt = new Date(Date.now() - 2 * 60_000).toISOString();
   vaultInfo.mockReset().mockResolvedValue(info({ status: "healthy", savedAt }));
@@ -148,6 +151,24 @@ describe("Settings", () => {
     expect(
       await screen.findByText("Backup can't be opened. Your next save will replace it."),
     ).toBeInTheDocument();
+  });
+
+  it("shows the Emergency Kit without a password", async () => {
+    const user = userEvent.setup();
+    render(<Settings />);
+    await user.click(await screen.findByRole("button", { name: "Emergency Kit" }));
+    expect(screen.getByRole("heading", { name: "Emergency Kit" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Blank line")).toHaveTextContent("Write it by hand");
+    expect(document.body.textContent).not.toContain("correct horse");
+  });
+
+  it("imports a CSV with no path and shows only the counts", async () => {
+    importLogins.mockResolvedValue({ added: 2, skipped: 1, cancelled: false });
+    const user = userEvent.setup();
+    render(<Settings />);
+    await user.click(await screen.findByRole("button", { name: "Import a CSV" }));
+    expect(importLogins).toHaveBeenCalledWith();
+    expect(await screen.findByText("Added 2 logins. 1 row was skipped.")).toBeInTheDocument();
   });
 
   it("opens the keyboard shortcuts list", async () => {

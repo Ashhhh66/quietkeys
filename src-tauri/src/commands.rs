@@ -9,7 +9,8 @@ use crate::error::VaultError;
 use crate::generator::{self, GeneratedSecret, PassphraseOptions, PasswordOptions, PasswordScore};
 use crate::health::VaultHealth;
 use crate::state::{
-    AppState, EntryDetails, EntryInput, EntrySummary, RevealedPassword, UpdateEntryInput, VaultInfo,
+    AppState, EntryDetails, EntryInput, EntrySummary, ImportCounts, RevealedPassword,
+    UpdateEntryInput, VaultInfo,
 };
 
 type CommandResult<T> = Result<T, VaultError>;
@@ -177,6 +178,79 @@ pub async fn export_vault(app: AppHandle) -> CommandResult<()> {
         .into_path()
         .map_err(|_| VaultError::Io(std::io::ErrorKind::InvalidInput))?;
     app.state::<AppState>().export_vault(&path)
+}
+
+/// How many logins a CSV import added. Cancel writes nothing. No row contents.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub added: u32,
+    pub skipped: u32,
+    pub cancelled: bool,
+}
+
+/// Opens the native open dialog in Rust. The UI never chooses the path.
+#[tauri::command]
+pub async fn import_logins(app: AppHandle) -> CommandResult<ImportResult> {
+    use tauri_plugin_dialog::DialogExt;
+    use zeroize::Zeroize;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Import logins")
+        .add_filter("CSV", &["csv"])
+        .pick_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let picked = tauri::async_runtime::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|_| VaultError::Crypto)?
+        .map_err(|_| VaultError::Crypto)?;
+    let Some(file) = picked else {
+        return Ok(ImportResult {
+            added: 0,
+            skipped: 0,
+            cancelled: true,
+        });
+    };
+    let path = file
+        .into_path()
+        .map_err(|_| VaultError::Io(std::io::ErrorKind::InvalidInput))?;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut bytes = read_import_file(&path)?;
+        let counts = app.state::<AppState>().import_csv(&bytes);
+        bytes.zeroize();
+        counts.map(|counts| import_result(counts, false))
+    })
+    .await
+    .map_err(|_| VaultError::Crypto)?
+}
+
+fn import_result(counts: ImportCounts, cancelled: bool) -> ImportResult {
+    ImportResult {
+        added: counts.added,
+        skipped: counts.skipped,
+        cancelled,
+    }
+}
+
+/// Reads at most one byte past the import limit, so a huge file is refused without
+/// loading the rest of it.
+fn read_import_file(path: &std::path::Path) -> Result<Vec<u8>, VaultError> {
+    use std::io::Read;
+    use zeroize::Zeroize;
+    const MAX_IMPORT_BYTES: usize = 8 * 1024 * 1024;
+    let file = std::fs::File::open(path)?;
+    let mut limited = file.take((MAX_IMPORT_BYTES + 1) as u64);
+    let mut bytes = Vec::new();
+    limited.read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_IMPORT_BYTES {
+        bytes.zeroize();
+        return Err(VaultError::ImportRefused);
+    }
+    Ok(bytes)
 }
 
 /// Clears the clipboard when its change counter still matches the last quietkeys copy.

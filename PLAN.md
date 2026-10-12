@@ -218,8 +218,8 @@ Work through one phase at a time. Do not start the next phase until every accept
 - **v1 release.** v1.0.0 is published. This phase is done.
 
 ### Phase 6 — P1 features
-- Onboarding and an Emergency Kit.
-- Import.
+- Onboarding and an Emergency Kit. After a vault is created, one screen says the master password cannot be recovered, shows the shortened vault path, and offers the kit. Unlock skips it. The kit can be opened again from Settings and printed. It lists the vault path and the names `vault.quietkeys.bak` and `vault.quietkeys.v1-backup`, with a blank line for the master password. The app never prints or saves that password.
+- Import. While unlocked, a CSV is chosen with the native open dialog in Rust. The UI sends no path. Columns are `title`, `username`, `password`, `url`, and `notes`. Passwords stay in Rust and are saved with the normal encrypted save. The screen shows how many logins were added, not their contents. A locked vault cannot import.
 
 Vault health shipped in 1.1.
 
